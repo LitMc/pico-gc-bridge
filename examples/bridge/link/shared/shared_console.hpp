@@ -13,7 +13,7 @@ struct ConsoleState {
 
 class SharedConsole {
   public:
-    ConsoleState load() const { return db_.load(); }
+    ConsoleState load() const { return latch_.load(); }
 
     void on_request_isr(std::span<const uint8_t> rx) {
         if (rx.empty()) {
@@ -46,13 +46,13 @@ class SharedConsole {
         }
 
         if (updated) {
-            db_.publish(shadow_);
+            latch_.publish(shadow_);
         }
     }
 
   private:
     ConsoleState shadow_{};
-    Latch<ConsoleState> db_{};
+    Latch<ConsoleState> latch_{};
 };
 
 } // namespace gcinput
