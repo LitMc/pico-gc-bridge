@@ -26,7 +26,7 @@ struct PadSnapshot {
 class SharedPad {
   public:
     // パッドの最新スナップショットを得る
-    PadSnapshot load() const { return db_.load(); }
+    PadSnapshot load() const { return latch_.load(); }
 
     // パッドからの応答を記録
     void on_response_isr(joybus::Command command, std::span<const uint8_t> rx) {
@@ -75,13 +75,13 @@ class SharedPad {
         if (got_valid_frame) {
             shadow_.publish_count++;
             shadow_.last_rx_command = command;
-            db_.publish(shadow_);
+            latch_.publish(shadow_);
         }
     }
 
   private:
     PadSnapshot shadow_{};    // IRQでの書き込み専用
-    Latch<PadSnapshot> db_{}; // 外部から読み取る用
+    Latch<PadSnapshot> latch_{}; // 外部から読み取る用
 };
 
 } // namespace gcinput
