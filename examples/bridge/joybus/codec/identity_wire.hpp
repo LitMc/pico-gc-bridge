@@ -23,8 +23,8 @@ enum class IdCapabilityBits : uint16_t {
 constexpr uint16_t to_mask(IdCapabilityBits bit) { return static_cast<uint16_t>(bit); }
 
 // --- ID byte3 (8bit) のビット定義（Joybus固有） ---
-static constexpr uint8_t kPollMask = 0x07u;   // bits[2:0]
-static constexpr uint8_t kRumbleMask = 0x18u; // bits[4:3]
+inline constexpr uint8_t kPollMask = 0x07u;   // bits[2:0]
+inline constexpr uint8_t kRumbleMask = 0x18u; // bits[4:3]
 
 inline constexpr std::array<uint8_t, kIdResponseSize>
 encode_identity_bytes(const domain::PadIdentity &id) {
