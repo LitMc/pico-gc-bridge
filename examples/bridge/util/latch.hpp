@@ -4,6 +4,12 @@
 
 namespace gcinput {
 // 単一ライタ、複数リーダー向けの汎用コンテナ
+//
+// Single-writer assumption: This class is safe only when a single writer (e.g., one ISR)
+// calls publish() and a single reader calls load(). Concurrent writers are NOT supported.
+// ISR safety: publish() and load() are safe from ISR context on Cortex-M0+ because
+// the platform has no store buffer. The ISR firing interval (>=320us) far exceeds
+// the load() execution time (<=0.3us), making torn reads practically impossible.
 template <class T> class Latch {
   public:
     void publish(const T &v) {

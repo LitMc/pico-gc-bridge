@@ -1,4 +1,5 @@
 #pragma once
+#include <atomic>
 #include "joybus/protocol/protocol.hpp"
 #include "link/shared/shared_pad.hpp"
 #include "util/latch.hpp"
@@ -49,6 +50,6 @@ class SharedPadHub {
   private:
     SharedPad rx_;
     Latch<TxPair> tx_;
-    uint32_t tx_publish_count_{0};
+    std::atomic<uint32_t> tx_publish_count_{0};
 };
 } // namespace gcinput
