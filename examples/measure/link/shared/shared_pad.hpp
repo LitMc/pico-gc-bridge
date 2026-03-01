@@ -7,7 +7,7 @@
 #include "joybus/codec/state_wire.hpp"
 #include "joybus/protocol/protocol.hpp"
 #include "link/policy.hpp"
-#include "util/latch.hpp"
+#include "util/latest_slot.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -81,7 +81,7 @@ class SharedPad {
 
   private:
     PadSnapshot shadow_{};    // IRQでの書き込み専用
-    Latch<PadSnapshot> db_{}; // 外部から読み取る用
+    LatestSlot<PadSnapshot> db_{}; // 外部から読み取る用
 };
 
 } // namespace gcinput

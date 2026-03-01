@@ -1,7 +1,7 @@
 #pragma once
 #include "joybus/protocol/reply.hpp"
 #include "link/shared/shared_pad.hpp"
-#include "util/latch.hpp"
+#include "util/latest_slot.hpp"
 
 namespace gcinput {
 struct TxPair {
@@ -48,7 +48,7 @@ class SharedPadHub {
 
   private:
     SharedPad rx_;
-    Latch<TxPair> tx_;
+    LatestSlot<TxPair> tx_;
     uint32_t tx_publish_count_{0};
 };
 } // namespace gcinput

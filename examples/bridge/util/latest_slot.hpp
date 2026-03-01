@@ -10,7 +10,7 @@ namespace gcinput {
 // ISR safety: publish() and load() are safe from ISR context on Cortex-M0+ because
 // the platform has no store buffer. The ISR firing interval (>=320us) far exceeds
 // the load() execution time (<=0.3us), making torn reads practically impossible.
-template <class T> class Latch {
+template <class T> class LatestSlot {
   public:
     void publish(const T &v) {
         const uint8_t current = index_.load(std::memory_order_relaxed);
