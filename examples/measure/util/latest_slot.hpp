@@ -4,7 +4,7 @@
 
 namespace gcinput {
 // 単一ライタ、複数リーダー向けの汎用コンテナ
-template <class T> class Latch {
+template <class T> class LatestSlot {
   public:
     void publish(const T &v) {
         const uint8_t current = index_.load(std::memory_order_relaxed);

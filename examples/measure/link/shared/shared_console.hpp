@@ -1,6 +1,6 @@
 #pragma once
 #include "joybus/protocol/protocol.hpp"
-#include "util/latch.hpp"
+#include "util/latest_slot.hpp"
 #include <span>
 
 namespace gcinput {
@@ -52,7 +52,7 @@ class SharedConsole {
 
   private:
     ConsoleState shadow_{};
-    Latch<ConsoleState> db_{};
+    LatestSlot<ConsoleState> db_{};
 };
 
 } // namespace gcinput
