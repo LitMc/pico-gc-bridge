@@ -131,7 +131,7 @@ int main() {
         .irq_base = 0,
     };
 
-    gcinput::PadConsoleLink client_link{};
+    gcinput::BridgeContext client_link{};
 
     // 入力変換処理
     auto &pipelines = client_link.transform_pipelines();

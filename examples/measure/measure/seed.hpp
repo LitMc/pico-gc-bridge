@@ -2,7 +2,7 @@
 #include "joybus/codec/common.hpp"
 #include "joybus/codec/identity_wire.hpp"
 #include "joybus/codec/state_wire.hpp"
-#include "link/pad_console_link.hpp"
+#include "link/bridge_context.hpp"
 
 // テスト用に初期応答を流し込む
 namespace gcinput::measure {
@@ -45,7 +45,7 @@ inline void feed_reply_to_hub(SharedPadHub &hub, const JoybusReply &reply) {
 }
 
 // テスト開始直後のOriginで困らないよう初期応答をセットする
-inline void seed_initial_responses(PadConsoleLink &link, const ConsoleState &console,
+inline void seed_initial_responses(BridgeContext &link, const ConsoleState &console,
                                    SeedOptions options = {}) {
     auto &hub = link.measure_pad_hub();
 

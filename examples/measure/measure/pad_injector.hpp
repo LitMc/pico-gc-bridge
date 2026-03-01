@@ -1,6 +1,6 @@
 #pragma once
 #include "joybus/codec/state_wire.hpp"
-#include "link/pad_console_link.hpp"
+#include "link/bridge_context.hpp"
 #include "link/policy.hpp"
 #include "link/shared/shared_console.hpp"
 #include "measure/pattern.hpp"
@@ -11,7 +11,7 @@ namespace gcinput::measure {
 
 template <TestPattern P> class PadInjector {
   public:
-    PadInjector(PadConsoleLink &link, Schedule schedule, P pattern)
+    PadInjector(BridgeContext &link, Schedule schedule, P pattern)
         : link_{link}, schedule_{schedule}, pattern_{pattern} {
         last_measure_epoch_ = link_.load_measure_epoch();
     }
@@ -58,7 +58,7 @@ template <TestPattern P> class PadInjector {
     }
 
   private:
-    PadConsoleLink &link_;
+    BridgeContext &link_;
     Schedule schedule_;
     P pattern_;
 
