@@ -1,5 +1,5 @@
 #pragma once
-#include "domain/report.hpp"
+#include "domain/pad_status_flags.hpp"
 #include "domain/state.hpp"
 #include "util/endian.hpp"
 #include <cstdint>
@@ -28,9 +28,9 @@ constexpr uint16_t to_mask(StatusWordBits bit) { return static_cast<uint16_t>(bi
 constexpr uint8_t to_mask(IdByte3Bits bit) { return static_cast<uint8_t>(bit); }
 
 // Status word（Status, Origin, Recalibrateの先頭2バイト）を共通形式のレポートに変換
-inline constexpr domain::PadReport
+inline constexpr domain::PadStatusFlags
 decode_report_from_status_word(std::span<const uint8_t, 2> byte2) {
-    domain::PadReport out{};
+    domain::PadStatusFlags out{};
 
     const uint16_t status_word = util::read_u16_le(byte2);
     out.origin_sent =
@@ -46,7 +46,7 @@ decode_report_from_status_word(std::span<const uint8_t, 2> byte2) {
 
 // IDレスポンスの3バイト目を共通形式のレポートに変換
 // UseControllerOriginはIDレスポンスに存在しないので触らない
-inline constexpr void update_report_from_id_byte3(domain::PadReport &report, uint8_t byte3) {
+inline constexpr void update_report_from_id_byte3(domain::PadStatusFlags &report, uint8_t byte3) {
     report.origin_sent = (byte3 & report::to_mask(report::IdByte3Bits::OriginNotSent)) == 0;
     report.error_latched = (byte3 & report::to_mask(report::IdByte3Bits::ErrorLatched)) != 0;
     report.error_last = (byte3 & report::to_mask(report::IdByte3Bits::ErrorLast)) != 0;

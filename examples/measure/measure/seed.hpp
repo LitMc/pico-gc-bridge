@@ -20,7 +20,7 @@ inline domain::PadState make_neutral_pad_state() {
     domain::PadState state{};
     state.input.clear_buttons();
     state.input.set_analog_neutral();
-    state.report = domain::PadReport{};
+    state.report = domain::PadStatusFlags{};
     return state;
 }
 

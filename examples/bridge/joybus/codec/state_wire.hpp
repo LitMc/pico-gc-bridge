@@ -1,5 +1,5 @@
 #pragma once
-#include "domain/report.hpp"
+#include "domain/pad_status_flags.hpp"
 #include "domain/state.hpp"
 #include "util/endian.hpp"
 #include "joybus/codec/report_wire.hpp"

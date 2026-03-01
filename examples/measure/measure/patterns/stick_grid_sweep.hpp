@@ -45,7 +45,7 @@ class StickGridSweep {
         if (!config_.base_is_custom) {
             config_.base.input.clear_buttons();
             config_.base.input.set_analog_neutral();
-            config_.base.report = domain::PadReport{};
+            config_.base.report = domain::PadStatusFlags{};
         }
 
         x_count_ = count_range(config_.x);
