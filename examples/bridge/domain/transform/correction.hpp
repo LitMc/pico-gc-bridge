@@ -87,9 +87,13 @@ inline void linear_scale(void *, domain::PadState &state) {
     const int32_t px = static_cast<int32_t>(analog.stick_x) - kCenter;
     const int32_t py = static_cast<int32_t>(analog.stick_y) - kCenter;
 
-    // k = 4/5。四捨五入: (px×4 + sign×2) / 5
-    const int32_t rx = (px * 4 + ((px >= 0) ? 2 : -2)) / 5;
-    const int32_t ry = (py * 4 + ((py >= 0) ? 2 : -2)) / 5;
+    // k = 4/5。四捨五入を乗算+右シフトで実現 (13108 ≈ 2^16/5)。
+    // Cortex-M0+ は hardware divider 非搭載のため、/ 5 は __aeabi_idiv
+    // (約30-40サイクル) になる。乗算+シフトで約1サイクルに削減。
+    const int32_t rx = (px >= 0) ? ((px * 4 + 2) * 13108) >> 16
+                                 : -((((-px) * 4 + 2) * 13108) >> 16);
+    const int32_t ry = (py >= 0) ? ((py * 4 + 2) * 13108) >> 16
+                                 : -((((-py) * 4 + 2) * 13108) >> 16);
 
     analog.stick_x =
         static_cast<uint8_t>(std::clamp(rx + kCenter, int32_t{0}, int32_t{255}));

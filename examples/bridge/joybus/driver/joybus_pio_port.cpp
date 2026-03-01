@@ -194,19 +194,19 @@ void JoybusPioPort::finish_receive_from_irq() {
 
     dma_channel_abort(dma_channel_);
 
-    rx_length_ = 0;
-    rx_ready_ = false;
-    rx_bad_ = false;
+    rx_length_.store(0);
+    rx_ready_.store(false);
+    rx_bad_.store(false);
 
     if (received < 2) {
-        rx_bad_ = true;
+        rx_bad_.store(true);
         return;
     }
 
     const uint32_t frame_length = received - 1; // ストップビット分を除く
     std::copy_n(rx_work_buffer_.begin(), frame_length, received_frame_.begin());
-    rx_length_ = frame_length;
-    rx_ready_ = true;
+    rx_length_.store(frame_length);
+    rx_ready_.store(true);
 }
 
 void JoybusPioPort::start_transmit_from_irq(std::size_t nbytes) {
@@ -234,9 +234,9 @@ void JoybusPioPort::on_pio_irq() {
 
     // 受信結果から即座に返信を生成
     std::size_t tx_length = 0;
-    if (callback_ && rx_ready_ && rx_length_ > 0) {
+    if (callback_ && rx_ready_.load() && rx_length_.load() > 0) {
         tx_length =
-            callback_(callback_user_, received_frame_.data(), static_cast<std::size_t>(rx_length_),
+            callback_(callback_user_, received_frame_.data(), static_cast<std::size_t>(rx_length_.load()),
                       tx_buffer_.data(), kTxBufferSize);
         if (tx_length > kTxBufferSize) {
             tx_length = kTxBufferSize;

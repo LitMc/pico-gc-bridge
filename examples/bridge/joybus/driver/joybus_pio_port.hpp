@@ -53,15 +53,15 @@ class JoybusPioPort {
     void __time_critical_func(start_receive)();
 
     // デバッグ/テスト用：直近のRX結果
-    bool rx_ready() const { return rx_ready_; }
-    bool rx_bad() const { return rx_bad_; }
-    uint32_t rx_length() const { return rx_length_; }
+    bool rx_ready() const { return rx_ready_.load(); }
+    bool rx_bad() const { return rx_bad_.load(); }
+    uint32_t rx_length() const { return rx_length_.load(); }
     const uint8_t *rx_data() const { return received_frame_.data(); }
 
     void clear_rx_status() {
-        rx_ready_ = false;
-        rx_bad_ = false;
-        rx_length_ = 0;
+        rx_ready_.store(false);
+        rx_bad_.store(false);
+        rx_length_.store(0);
     }
 
     // テスト用: 手動で1フレーム送信
@@ -96,9 +96,9 @@ class JoybusPioPort {
     std::array<uint8_t, kRxBufferSize> received_frame_{};
     std::array<uint8_t, kTxBufferSize> tx_buffer_{};
 
-    volatile uint32_t rx_length_ = 0;
-    volatile bool rx_ready_ = false;
-    volatile bool rx_bad_ = false;
+    std::atomic<uint32_t> rx_length_{0};
+    std::atomic<bool> rx_ready_{false};
+    std::atomic<bool> rx_bad_{false};
 
     PacketCallback callback_ = nullptr;
     void *callback_user_ = nullptr;
