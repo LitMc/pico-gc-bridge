@@ -52,15 +52,15 @@ inline void seed_initial_responses(BridgeContext &link, const ConsoleState &cons
     const domain::PadState neutral = make_neutral_pad_state();
 
     if (options.status) {
-        const auto reply = joybus::state::encode_status(neutral, console.poll_mode);
+        const auto reply = joybus::state_wire::encode_status(neutral, console.poll_mode);
         feed_reply_to_hub(hub, reply);
     }
     if (options.origin) {
-        const auto reply = joybus::state::encode_origin(neutral);
+        const auto reply = joybus::state_wire::encode_origin(neutral);
         feed_reply_to_hub(hub, reply);
     }
     if (options.recalibrate) {
-        const auto reply = joybus::state::encode_recalibrate(neutral);
+        const auto reply = joybus::state_wire::encode_recalibrate(neutral);
         feed_reply_to_hub(hub, reply);
     }
     if (options.id || options.reset) {

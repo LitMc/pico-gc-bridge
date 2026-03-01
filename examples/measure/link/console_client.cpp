@@ -45,7 +45,7 @@ std::size_t ConsoleClient::callback(void *user, const uint8_t *rx, std::size_t r
     switch (cmd) {
     case joybus::Command::Status: {
         const domain::PadState original_state = original_snapshot.status;
-        original_reply = joybus::state::encode_status(original_state, host_poll_mode);
+        original_reply = joybus::state_wire::encode_status(original_state, host_poll_mode);
 
         domain::PadState modified_state = original_state;
         // 計測用
@@ -53,23 +53,23 @@ std::size_t ConsoleClient::callback(void *user, const uint8_t *rx, std::size_t r
             // 計測時は厳密な値を送るため素通しする
             pipelines.status.apply_from_isr(modified_state);
         }
-        modified_reply = joybus::state::encode_status(modified_state, host_poll_mode);
+        modified_reply = joybus::state_wire::encode_status(modified_state, host_poll_mode);
         break;
     }
     case joybus::Command::Origin: {
         const domain::PadState original_state = original_snapshot.origin;
-        original_reply = joybus::state::encode_origin(original_state);
+        original_reply = joybus::state_wire::encode_origin(original_state);
         domain::PadState modified_state = original_state;
         pipelines.origin.apply_from_isr(modified_state);
-        modified_reply = joybus::state::encode_origin(modified_state);
+        modified_reply = joybus::state_wire::encode_origin(modified_state);
         break;
     }
     case joybus::Command::Recalibrate: {
         const domain::PadState original_state = original_snapshot.origin;
-        original_reply = joybus::state::encode_recalibrate(original_state);
+        original_reply = joybus::state_wire::encode_recalibrate(original_state);
         domain::PadState modified_state = original_state;
         pipelines.recalibrate.apply_from_isr(modified_state);
-        modified_reply = joybus::state::encode_recalibrate(modified_state);
+        modified_reply = joybus::state_wire::encode_recalibrate(modified_state);
         break;
     }
     case joybus::Command::Id: {

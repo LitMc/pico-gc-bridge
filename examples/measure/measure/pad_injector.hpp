@@ -47,7 +47,7 @@ template <TestPattern P> class PadInjector {
         auto &hub = link_.measure_pad_hub();
         const auto console = link_.shared_console().load();
         // （存在しない）パッドへも固定のPollModeでポーリングしたということにする
-        const auto reply = joybus::state::encode_status(state, policy::kPadPollModeForQuery);
+        const auto reply = joybus::state_wire::encode_status(state, policy::kPadPollModeForQuery);
         hub.on_pad_response_isr(reply.command(), reply.view());
     }
 
