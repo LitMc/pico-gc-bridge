@@ -2,7 +2,7 @@
 #include "joybus/codec/common.hpp"
 #include "joybus/codec/identity_wire.hpp"
 #include "joybus/codec/state_wire.hpp"
-#include "link/pad_console_link.hpp"
+#include "link/bridge_context.hpp"
 
 // テスト用に初期応答を流し込む
 namespace gcinput::measure {
@@ -20,7 +20,7 @@ inline domain::PadState make_neutral_pad_state() {
     domain::PadState state{};
     state.input.clear_buttons();
     state.input.set_analog_neutral();
-    state.report = domain::PadReport{};
+    state.report = domain::PadStatusFlags{};
     return state;
 }
 
@@ -45,22 +45,22 @@ inline void feed_reply_to_hub(SharedPadHub &hub, const JoybusReply &reply) {
 }
 
 // テスト開始直後のOriginで困らないよう初期応答をセットする
-inline void seed_initial_responses(PadConsoleLink &link, const ConsoleState &console,
+inline void seed_initial_responses(BridgeContext &link, const ConsoleState &console,
                                    SeedOptions options = {}) {
     auto &hub = link.measure_pad_hub();
 
     const domain::PadState neutral = make_neutral_pad_state();
 
     if (options.status) {
-        const auto reply = joybus::state::encode_status(neutral, console.poll_mode);
+        const auto reply = joybus::state_wire::encode_status(neutral, console.poll_mode);
         feed_reply_to_hub(hub, reply);
     }
     if (options.origin) {
-        const auto reply = joybus::state::encode_origin(neutral);
+        const auto reply = joybus::state_wire::encode_origin(neutral);
         feed_reply_to_hub(hub, reply);
     }
     if (options.recalibrate) {
-        const auto reply = joybus::state::encode_recalibrate(neutral);
+        const auto reply = joybus::state_wire::encode_recalibrate(neutral);
         feed_reply_to_hub(hub, reply);
     }
     if (options.id || options.reset) {

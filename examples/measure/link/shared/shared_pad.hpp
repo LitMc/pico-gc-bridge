@@ -1,6 +1,6 @@
 #pragma once
 #include "domain/identity.hpp"
-#include "domain/report.hpp"
+#include "domain/pad_status_flags.hpp"
 #include "domain/state.hpp"
 #include "joybus/codec/identity_wire.hpp"
 #include "joybus/codec/report_wire.hpp"
@@ -39,7 +39,7 @@ class SharedPad {
             auto view = std::span<const uint8_t, joybus::kStatusResponseSize>(rx);
 
             auto decoded =
-                gcinput::joybus::state::decode_status(view, policy::kPadPollModeForQuery);
+                gcinput::joybus::state_wire::decode_status(view, policy::kPadPollModeForQuery);
             shadow_.status.report = decoded.report;
             shadow_.status.input = decoded.input;
             got_valid_frame = true;
@@ -52,7 +52,7 @@ class SharedPad {
                 break;
             }
             auto view = std::span<const uint8_t, joybus::kOriginResponseSize>(rx);
-            auto decoded = gcinput::joybus::state::decode_origin(view);
+            auto decoded = gcinput::joybus::state_wire::decode_origin(view);
             shadow_.origin.report = decoded.report;
             shadow_.origin.input = decoded.input;
             got_valid_frame = true;

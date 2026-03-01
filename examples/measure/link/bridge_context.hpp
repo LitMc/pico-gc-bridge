@@ -8,7 +8,7 @@
 namespace gcinput {
 
 // パッド向けクライアントとコンソール向けクライアントで共有する情報
-class PadConsoleLink {
+class BridgeContext {
   public:
     SharedPadHub &real_pad_hub() { return real_pad_hub_; }
     const SharedPadHub &real_pad_hub() const { return real_pad_hub_; }
@@ -40,26 +40,8 @@ class PadConsoleLink {
         reset_epoch_.fetch_add(1, std::memory_order_relaxed);
     }
 
-    // Console->Pad: パッドのOrigin中継を要求
-    void __isr publish_pad_origin_request_from_isr() {
-        origin_epoch_.fetch_add(1, std::memory_order_relaxed);
-    }
-
-    // Console->Pad: パッドのRecalibrate中継を要求
-    void __isr publish_pad_recalibrate_request_from_isr() {
-        recalibrate_epoch_.fetch_add(1, std::memory_order_relaxed);
-    }
-
     // Pad<-Link: 最後に発行されたReset要求のエポックを取得
     uint32_t load_reset_epoch() const { return reset_epoch_.load(std::memory_order_relaxed); }
-
-    // Pad<-Link: 最後に発行されたOrigin中継要求のエポックを取得
-    uint32_t load_origin_epoch() const { return origin_epoch_.load(std::memory_order_relaxed); }
-
-    // Pad<-Link: 最後に発行されたRecalibrate中継要求のエポックを取得
-    uint32_t load_recalibrate_epoch() const {
-        return recalibrate_epoch_.load(std::memory_order_relaxed);
-    }
 
     // Pad<-Link: Reset要求があればlast_reset_epochを更新しtrue、なければ更新せずfalse
     [[nodiscard]] bool consume_pad_reset_request(uint32_t &last_reset_epoch) const {
@@ -71,26 +53,6 @@ class PadConsoleLink {
         return true;
     }
 
-    // Pad<-Link: Origin中継要求があればlast_origin_epochを更新しtrue、なければ更新せずfalse
-    [[nodiscard]] bool consume_pad_origin_request(uint32_t &last_origin_epoch) const {
-        const uint32_t cur = load_origin_epoch();
-        if (cur == last_origin_epoch) {
-            return false;
-        }
-        last_origin_epoch = cur;
-        return true;
-    }
-
-    // Pad<-Link: Recalibrate中継要求があればlast_recalibrate_epochを更新しtrue
-    [[nodiscard]] bool consume_pad_recalibrate_request(uint32_t &last_recalibrate_epoch) const {
-        const uint32_t cur = load_recalibrate_epoch();
-        if (cur == last_recalibrate_epoch) {
-            return false;
-        }
-        last_recalibrate_epoch = cur;
-        return true;
-    }
-
     // コマンド応答の変換パイプライン
     domain::transform::PipelineSet &transform_pipelines() { return pipelines_; }
     // コマンド応答の変換パイプライン
@@ -99,11 +61,49 @@ class PadConsoleLink {
   private:
     std::atomic<uint8_t> pad_state_{static_cast<uint8_t>(PadConnectionState::Disconnected)};
     std::atomic<uint32_t> reset_epoch_{0};
-    std::atomic<uint32_t> origin_epoch_{0};
-    std::atomic<uint32_t> recalibrate_epoch_{0};
     SharedPadHub real_pad_hub_{};
     SharedConsole shared_console_{};
     domain::transform::PipelineSet pipelines_{};
-};
 
+    // テスト用
+  public:
+    SharedPadHub &measure_pad_hub() { return measure_pad_hub_; }
+    const SharedPadHub &measure_pad_hub() const { return measure_pad_hub_; }
+    SharedPadHub &active_pad_hub() {
+        return is_measure_enabled() ? measure_pad_hub_ : real_pad_hub_;
+    }
+    const SharedPadHub &active_pad_hub() const {
+        return is_measure_enabled() ? measure_pad_hub_ : real_pad_hub_;
+    }
+
+    void enable_measure_from_main() {
+        measure_enabled_.store(1, std::memory_order_release);
+        measure_epoch_.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    void disable_measure_from_main() {
+        measure_enabled_.store(0, std::memory_order_release);
+        measure_epoch_.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    bool is_measure_enabled() const {
+        return measure_enabled_.load(std::memory_order_acquire) != 0;
+    }
+
+    uint32_t load_measure_epoch() const { return measure_epoch_.load(std::memory_order_relaxed); }
+
+    [[nodiscard]] bool consume_measure_epoch(uint32_t &last) const {
+        const uint32_t cur = load_measure_epoch();
+        if (cur == last) {
+            return false;
+        }
+        last = cur;
+        return true;
+    }
+
+  private:
+    SharedPadHub measure_pad_hub_{};
+    std::atomic<uint8_t> measure_enabled_{0};
+    std::atomic<uint32_t> measure_epoch_{0};
+};
 } // namespace gcinput

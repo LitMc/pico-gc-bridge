@@ -1,7 +1,7 @@
 #pragma once
 #include "joybus/driver/joybus_pio_port.hpp"
 #include "joybus/protocol/protocol.hpp"
-#include "link/pad_console_link.hpp"
+#include "link/bridge_context.hpp"
 #include "link/shared/shared_console.hpp"
 #include "link/shared/shared_pad_hub.hpp"
 #include <atomic>
@@ -10,7 +10,7 @@
 namespace gcinput {
 class PadClient {
   public:
-    explicit PadClient(JoybusPioPort::Config host_to_pad_config, PadConsoleLink &link)
+    explicit PadClient(JoybusPioPort::Config host_to_pad_config, BridgeContext &link)
         : link_{link}, host_to_pad_(host_to_pad_config, &gcinput::PadClient::callback, this) {
         last_reset_epoch_ = link_.load_reset_epoch();
     };
@@ -92,24 +92,24 @@ class PadClient {
     void publish_pad_state_to_link() {
         switch (state_) {
         case State::Ready:
-            link_.publish_pad_state_from_main(PadConsoleLink::PadConnectionState::Ready);
+            link_.publish_pad_state_from_main(BridgeContext::PadConnectionState::Ready);
             break;
         case State::BootId:
         case State::BootOrigin:
         case State::BootRecalibrate:
         case State::WarmStatus:
-            link_.publish_pad_state_from_main(PadConsoleLink::PadConnectionState::Booting);
+            link_.publish_pad_state_from_main(BridgeContext::PadConnectionState::Booting);
             break;
         case State::Disconnected:
         case State::Resetting:
         default:
-            link_.publish_pad_state_from_main(PadConsoleLink::PadConnectionState::Disconnected);
+            link_.publish_pad_state_from_main(BridgeContext::PadConnectionState::Disconnected);
             break;
         }
     }
 
   private:
-    PadConsoleLink &link_;
+    BridgeContext &link_;
     JoybusPioPort host_to_pad_;
 
     State state_{State::Disconnected};

@@ -1,6 +1,6 @@
 #pragma once
 #include "domain/identity.hpp"
-#include "domain/report.hpp"
+#include "domain/pad_status_flags.hpp"
 #include "joybus/codec/common.hpp"
 #include "joybus/codec/report_wire.hpp"
 #include "joybus/protocol/protocol.hpp"

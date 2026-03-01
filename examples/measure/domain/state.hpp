@@ -1,5 +1,5 @@
 #pragma once
-#include "domain/report.hpp"
+#include "domain/pad_status_flags.hpp"
 #include <cstdint>
 #include <type_traits>
 
@@ -170,7 +170,7 @@ struct PadInput {
 
 // Status, Origin, Recalibrateレスポンスの共通形式。PollModeに依存しない。
 struct PadState {
-    PadReport report{};
+    PadStatusFlags report{};
     PadInput input{};
 };
 

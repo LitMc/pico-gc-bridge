@@ -1,6 +1,6 @@
 #pragma once
 #include "domain/mode.hpp"
-#include "domain/report.hpp"
+#include "domain/pad_status_flags.hpp"
 #include <cstdint>
 #include <type_traits>
 
@@ -22,7 +22,7 @@ struct PadIdentityCapabilities {
 
 // コントローラの現在状態（変わりうる）
 struct PadIdentityRuntime {
-    PadReport report{};
+    PadStatusFlags report{};
     PollMode poll_mode{PollMode::Mode3};
     RumbleMode rumble_mode{RumbleMode::Off};
 };

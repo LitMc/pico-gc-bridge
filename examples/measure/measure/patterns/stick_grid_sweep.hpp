@@ -3,14 +3,14 @@
 #include <cstdint>
 
 namespace gcinput::measure {
-struct Uint8bitRange {
+struct Uint8Range {
     uint8_t begin{0};
     uint8_t end{255};
     uint8_t step{1};
 };
 
 // 指定された範囲内の要素数
-inline uint32_t count_range(const Uint8bitRange &range) {
+inline uint32_t count_range(const Uint8Range &range) {
     if (range.step == 0) {
         return 0;
     }
@@ -31,8 +31,8 @@ class StickGridSweep {
     };
 
     struct Config {
-        Uint8bitRange x{};
-        Uint8bitRange y{};
+        Uint8Range x{};
+        Uint8Range y{};
         bool loop{true};
         Target target{Target::Joystick};
 
@@ -45,7 +45,7 @@ class StickGridSweep {
         if (!config_.base_is_custom) {
             config_.base.input.clear_buttons();
             config_.base.input.set_analog_neutral();
-            config_.base.report = domain::PadReport{};
+            config_.base.report = domain::PadStatusFlags{};
         }
 
         x_count_ = count_range(config_.x);

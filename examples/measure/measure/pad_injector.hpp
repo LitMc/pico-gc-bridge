@@ -1,6 +1,6 @@
 #pragma once
 #include "joybus/codec/state_wire.hpp"
-#include "link/pad_console_link.hpp"
+#include "link/bridge_context.hpp"
 #include "link/policy.hpp"
 #include "link/shared/shared_console.hpp"
 #include "measure/pattern.hpp"
@@ -11,7 +11,7 @@ namespace gcinput::measure {
 
 template <TestPattern P> class PadInjector {
   public:
-    PadInjector(PadConsoleLink &link, Schedule schedule, P pattern)
+    PadInjector(BridgeContext &link, Schedule schedule, P pattern)
         : link_{link}, schedule_{schedule}, pattern_{pattern} {
         last_measure_epoch_ = link_.load_measure_epoch();
     }
@@ -47,7 +47,7 @@ template <TestPattern P> class PadInjector {
         auto &hub = link_.measure_pad_hub();
         const auto console = link_.shared_console().load();
         // （存在しない）パッドへも固定のPollModeでポーリングしたということにする
-        const auto reply = joybus::state::encode_status(state, policy::kPadPollModeForQuery);
+        const auto reply = joybus::state_wire::encode_status(state, policy::kPadPollModeForQuery);
         hub.on_pad_response_isr(reply.command(), reply.view());
     }
 
@@ -58,7 +58,7 @@ template <TestPattern P> class PadInjector {
     }
 
   private:
-    PadConsoleLink &link_;
+    BridgeContext &link_;
     Schedule schedule_;
     P pattern_;
 

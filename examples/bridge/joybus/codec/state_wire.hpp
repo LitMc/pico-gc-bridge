@@ -1,5 +1,5 @@
 #pragma once
-#include "domain/report.hpp"
+#include "domain/pad_status_flags.hpp"
 #include "domain/state.hpp"
 #include "util/endian.hpp"
 #include "joybus/codec/report_wire.hpp"
@@ -9,7 +9,7 @@
 
 // https://jefflongo.dev/posts/gc-controller-reverse-engineering-part-1/#poll-mode
 // コントローラ入力をJoybus形式に変換、復元するための処理群
-namespace gcinput::joybus::state {
+namespace gcinput::joybus::state_wire {
 // 下位4ビットを取り出して8ビットに拡張。PollMode0..2のレスポンスには4bit幅のアナログ値が入る
 // これを内部のアナログ値0..255に変換。中点0x8(8)が0x80(128)に対応するよう<<4する
 inline constexpr uint8_t expand4bitTo8bit(uint8_t value4bit) {
@@ -269,4 +269,4 @@ static_assert(shrink8bitTo4bit(expand4bitTo8bit(0x0)) == 0x0);
 static_assert(shrink8bitTo4bit(expand4bitTo8bit(0x8)) == 0x8);
 static_assert(shrink8bitTo4bit(expand4bitTo8bit(0xF)) == 0xF);
 static_assert(pack4bitsToByte(0xA, 0x5) == 0xA5);
-} // namespace gcinput::joybus::state
+} // namespace gcinput::joybus::state_wire

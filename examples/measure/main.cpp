@@ -131,7 +131,7 @@ int main() {
         .irq_base = 0,
     };
 
-    gcinput::PadConsoleLink client_link{};
+    gcinput::BridgeContext client_link{};
 
     // 入力変換処理
     auto &pipelines = client_link.transform_pipelines();
@@ -200,7 +200,7 @@ int main() {
                    client_link.is_measure_enabled() ? "enabled" : "disabled");
         }
 
-        gcinput::TxPair last_tx = client_link.active_pad_hub().load_last_tx();
+        gcinput::TxRecord last_tx = client_link.active_pad_hub().load_last_tx();
         if (client_link.active_pad_hub().consume_tx_if_new(last_tx_publish_count, last_tx)) {
             last_tx_publish_count = last_tx.publish_count;
             const auto raw = last_tx.raw;
