@@ -255,7 +255,7 @@ int main() {
 
         // デバッグログ: 各ステージの中間値を出力
         gcinput::TxPair last_tx{};
-        if (client_link.active_pad_hub().consume_tx_if_new(last_tx_publish_count, last_tx)) {
+        if (client_link.real_pad_hub().consume_tx_if_new(last_tx_publish_count, last_tx)) {
             if (last_tx.raw.command() == gcinput::joybus::Command::Status &&
                 (int32_t)(now_us - last_debug_log_us) >= (int32_t)kDebugLogIntervalUs) {
                 last_debug_log_us = now_us;

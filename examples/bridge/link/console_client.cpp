@@ -28,7 +28,7 @@ std::size_t ConsoleClient::callback(void *user, const uint8_t *rx, std::size_t r
         return 0;
     }
 
-    auto &pad_hub = self->link_.active_pad_hub();
+    auto &pad_hub = self->link_.real_pad_hub();
     const auto original_snapshot = pad_hub.load_original_snapshot();
 
     const auto cmd = static_cast<joybus::Command>(rx[0]);
