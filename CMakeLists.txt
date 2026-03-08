@@ -8,4 +8,5 @@ project(pico_gc_bridge C CXX ASM)
 pico_sdk_init()
 
 add_subdirectory(examples/bridge)
+add_subdirectory(examples/input_viewer)
 add_subdirectory(examples/measure)
