@@ -1,10 +1,14 @@
 #include "link/pad_client.hpp"
+#include "debug_log.hpp"
 #include "link/policy.hpp"
 
 namespace gcinput {
 void PadClient::load_reset_epoch_() { last_reset_epoch_ = link_.load_reset_epoch(); }
 
 void PadClient::on_pad_response_isr(joybus::Command command, std::span<const uint8_t> rx) {
+    // PAD RX: パッドからの応答をログ
+    debug_log::ring_push_data(debug_log::Port::Pad, debug_log::Dir::RX,
+                              static_cast<uint8_t>(command), rx.data(), rx.size());
     link_.real_pad_hub().on_pad_response_isr(command, rx);
 }
 
@@ -22,7 +26,27 @@ std::size_t PadClient::callback(void *user, const uint8_t *rx, std::size_t rx_le
     return 0;
 }
 
+static const char *state_name(PadClient::State s) {
+    switch (s) {
+    case PadClient::State::Disconnected:     return "Disconnected";
+    case PadClient::State::Resetting:        return "Resetting";
+    case PadClient::State::BootId:           return "BootId";
+    case PadClient::State::BootOrigin:       return "BootOrigin";
+    case PadClient::State::BootRecalibrate:  return "BootRecalibrate";
+    case PadClient::State::WarmStatus:       return "WarmStatus";
+    case PadClient::State::Ready:            return "Ready";
+    case PadClient::State::RelayOrigin:      return "RelayOrigin";
+    case PadClient::State::RelayRecalibrate: return "RelayRecalibrate";
+    default: return "?";
+    }
+}
+
 void PadClient::enter_state_(State next) {
+    // 状態遷移ログ
+    char msg[48];
+    snprintf(msg, sizeof(msg), "%s -> %s", state_name(state_), state_name(next));
+    debug_log::ring_push_state(debug_log::Port::Pad, msg);
+
     state_ = next;
     abort_wait_();
     publish_pad_state_to_link_();
@@ -48,6 +72,7 @@ void PadClient::tick(uint32_t now_us, const ConsoleState &console) {
 
     // 繋がっていたコントローラとの接続が切れた
     if (!pad_alive && state_ != State::Disconnected) {
+        debug_log::ring_push_timeout(debug_log::Port::Pad, "pad connection lost");
         enter_state_(State::Disconnected);
         next_status_due_us_ = 0;
     }
@@ -80,6 +105,7 @@ void PadClient::tick(uint32_t now_us, const ConsoleState &console) {
             // IDの応答が来たら次はOrigin
             enter_state_(State::BootOrigin);
         } else if (is_timeout_reached_(now_us, response_deadline_us_)) {
+            debug_log::ring_push_timeout(debug_log::Port::Pad, "waiting for Id");
             abort_wait_();
         }
         break;
@@ -95,6 +121,7 @@ void PadClient::tick(uint32_t now_us, const ConsoleState &console) {
             load_reset_epoch_();
             enter_state_(State::BootId);
         } else if (is_timeout_reached_(now_us, response_deadline_us_)) {
+            debug_log::ring_push_timeout(debug_log::Port::Pad, "waiting for Reset");
             abort_wait_();
         }
         break;
@@ -108,6 +135,7 @@ void PadClient::tick(uint32_t now_us, const ConsoleState &console) {
         if (got(joybus::Command::Id)) {
             enter_state_(State::BootOrigin);
         } else if (is_timeout_reached_(now_us, response_deadline_us_)) {
+            debug_log::ring_push_timeout(debug_log::Port::Pad, "waiting for Id (boot)");
             abort_wait_();
         }
         break;
@@ -121,6 +149,7 @@ void PadClient::tick(uint32_t now_us, const ConsoleState &console) {
         if (got(joybus::Command::Origin)) {
             enter_state_(State::BootRecalibrate);
         } else if (is_timeout_reached_(now_us, response_deadline_us_)) {
+            debug_log::ring_push_timeout(debug_log::Port::Pad, "waiting for Origin");
             abort_wait_();
         }
         break;
@@ -134,6 +163,7 @@ void PadClient::tick(uint32_t now_us, const ConsoleState &console) {
         if (got(joybus::Command::Recalibrate)) {
             enter_state_(State::WarmStatus);
         } else if (is_timeout_reached_(now_us, response_deadline_us_)) {
+            debug_log::ring_push_timeout(debug_log::Port::Pad, "waiting for Recalibrate");
             abort_wait_();
         }
         break;
@@ -152,6 +182,7 @@ void PadClient::tick(uint32_t now_us, const ConsoleState &console) {
             enter_state_(State::Ready);
             next_status_due_us_ = now_us + kStatusPeriodUs;
         } else if (is_timeout_reached_(now_us, response_deadline_us_)) {
+            debug_log::ring_push_timeout(debug_log::Port::Pad, "waiting for Status (warm)");
             abort_wait_();
         }
         break;
@@ -183,6 +214,7 @@ void PadClient::tick(uint32_t now_us, const ConsoleState &console) {
                 next_status_due_us_ = now_us + kStatusPeriodUs;
                 abort_wait_();
             } else if (is_timeout_reached_(now_us, response_deadline_us_)) {
+                debug_log::ring_push_timeout(debug_log::Port::Pad, "waiting for Status");
                 next_status_due_us_ = now_us + kRetryDelayUs;
                 abort_wait_();
             }
@@ -212,6 +244,7 @@ void PadClient::tick(uint32_t now_us, const ConsoleState &console) {
             enter_state_(State::Ready);
             next_status_due_us_ = now_us + kStatusPeriodUs;
         } else if (is_timeout_reached_(now_us, response_deadline_us_)) {
+            debug_log::ring_push_timeout(debug_log::Port::Pad, "waiting for Origin (relay)");
             // タイムアウトしてもパッドは接続済みなのでReadyに戻る
             enter_state_(State::Ready);
             next_status_due_us_ = now_us + kRetryDelayUs;
@@ -228,6 +261,7 @@ void PadClient::tick(uint32_t now_us, const ConsoleState &console) {
             enter_state_(State::Ready);
             next_status_due_us_ = now_us + kStatusPeriodUs;
         } else if (is_timeout_reached_(now_us, response_deadline_us_)) {
+            debug_log::ring_push_timeout(debug_log::Port::Pad, "waiting for Recalibrate (relay)");
             // タイムアウトしてもパッドは接続済みなのでReadyに戻る
             enter_state_(State::Ready);
             next_status_due_us_ = now_us + kRetryDelayUs;
