@@ -61,7 +61,7 @@ void init_led() {
 
 void print_csv_header() {
     printf("# debug_probe v1\n");
-    printf("# format: T,timestamp_us,port,dir,len,hex_data\n");
+    printf("# format: T,timestamp_us,port,dir,len,hex_data[,pm=P{n}/C{n}/R{n}]\n");
     printf("# format: S,timestamp_us,from_state,to_state\n");
     printf("# format: M,timestamp_us,message\n");
     printf("# format: U,timestamp_us,port,polls,ok,timeout\n");
@@ -99,6 +99,10 @@ void print_log_entry(const debug_log::LogEntry &e) {
         for (uint8_t i = 0; i < e.data_len; i++) {
             if (i > 0) printf(" ");
             printf("%02X", e.data[i]);
+        }
+        if (e.has_poll_mode) {
+            printf(",pm=P%u/C%u/R%u",
+                   e.poll_mode_pad, e.poll_mode_console, e.poll_mode_reply);
         }
         printf("\n");
     }

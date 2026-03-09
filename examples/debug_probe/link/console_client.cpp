@@ -3,6 +3,7 @@
 #include "domain/transform/pipeline.hpp"
 #include "joybus/codec/identity_wire.hpp"
 #include "joybus/codec/state_wire.hpp"
+#include "link/policy.hpp"
 
 namespace gcinput {
 
@@ -25,8 +26,18 @@ std::size_t ConsoleClient::callback(void *user, const uint8_t *rx, std::size_t r
     auto *self = static_cast<ConsoleClient *>(user);
     self->link_.shared_console().on_request_isr(std::span<const uint8_t>(rx, rx_len));
 
+    const auto cmd = static_cast<joybus::Command>(rx[0]);
+
     // CON RX: コンソールからのリクエストをログ
-    debug_log::ring_push_data(debug_log::Port::Console, debug_log::Dir::RX, rx[0], rx, rx_len);
+    // Statusコマンドの場合はPollMode情報付きでログ
+    if (cmd == joybus::Command::Status) {
+        const uint8_t pm_console = (rx_len >= 2) ? rx[1] : 0;
+        debug_log::ring_push_data_with_poll_mode(
+            debug_log::Port::Console, debug_log::Dir::RX, rx[0], rx, rx_len,
+            static_cast<uint8_t>(policy::kPadPollModeForQuery), pm_console, 0);
+    } else {
+        debug_log::ring_push_data(debug_log::Port::Console, debug_log::Dir::RX, rx[0], rx, rx_len);
+    }
 
     if (!self->link_.is_pad_ready()) {
         return 0;
@@ -34,8 +45,6 @@ std::size_t ConsoleClient::callback(void *user, const uint8_t *rx, std::size_t r
 
     auto &pad_hub = self->link_.real_pad_hub();
     const auto original_snapshot = pad_hub.load_original_snapshot();
-
-    const auto cmd = static_cast<joybus::Command>(rx[0]);
 
     // コンソールに指定されたPollModeとRumbleModeを応答に使う
     const auto host_console = self->link_.shared_console().load();
@@ -116,8 +125,18 @@ std::size_t ConsoleClient::callback(void *user, const uint8_t *rx, std::size_t r
 
     // CON TX: コンソールへのレスポンスをログ
     const auto tx_view = modified_reply.view();
-    debug_log::ring_push_data(debug_log::Port::Console, debug_log::Dir::TX,
-                              static_cast<uint8_t>(cmd), tx_view.data(), tx_view.size());
+    if (cmd == joybus::Command::Status) {
+        const uint8_t pm_console = (rx_len >= 2) ? rx[1] : 0;
+        debug_log::ring_push_data_with_poll_mode(
+            debug_log::Port::Console, debug_log::Dir::TX,
+            static_cast<uint8_t>(cmd), tx_view.data(), tx_view.size(),
+            static_cast<uint8_t>(policy::kPadPollModeForQuery),
+            pm_console,
+            static_cast<uint8_t>(host_poll_mode));
+    } else {
+        debug_log::ring_push_data(debug_log::Port::Console, debug_log::Dir::TX,
+                                  static_cast<uint8_t>(cmd), tx_view.data(), tx_view.size());
+    }
 
     pad_hub.publish_tx_from_isr(original_snapshot.publish_count, original_reply, modified_reply);
     return tx_len;

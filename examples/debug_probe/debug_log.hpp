@@ -16,6 +16,10 @@ struct LogEntry {
     uint8_t command_byte;
     uint8_t data[16];
     uint8_t data_len;
+    uint8_t poll_mode_pad;      // PAD側ポーリングで使用したPollMode
+    uint8_t poll_mode_console;  // コンソールからリクエストされたPollMode
+    uint8_t poll_mode_reply;    // Picoが応答に使用したPollMode
+    bool    has_poll_mode;      // PollMode情報の有無
     bool is_state;
     bool is_timeout;
     char state_str[48];
@@ -50,6 +54,29 @@ inline void ring_push_data(Port port, Dir dir, uint8_t cmd, const uint8_t *data,
     }
     e.is_state = false;
     e.is_timeout = false;
+    e.has_poll_mode = false;
+    ring_push(e);
+}
+
+// ISR安全: PollMode情報付きデータログをリングバッファに積む
+inline void ring_push_data_with_poll_mode(Port port, Dir dir, uint8_t cmd,
+                                          const uint8_t *data, std::size_t len,
+                                          uint8_t pm_pad, uint8_t pm_con, uint8_t pm_reply) {
+    LogEntry e{};
+    e.timestamp_us = time_us_32();
+    e.port = port;
+    e.dir = dir;
+    e.command_byte = cmd;
+    e.data_len = static_cast<uint8_t>(len > 16 ? 16 : len);
+    if (data && e.data_len > 0) {
+        memcpy(e.data, data, e.data_len);
+    }
+    e.is_state = false;
+    e.is_timeout = false;
+    e.has_poll_mode = true;
+    e.poll_mode_pad = pm_pad;
+    e.poll_mode_console = pm_con;
+    e.poll_mode_reply = pm_reply;
     ring_push(e);
 }
 
