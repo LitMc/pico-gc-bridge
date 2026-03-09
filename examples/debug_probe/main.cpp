@@ -1,5 +1,4 @@
 #include "debug_log.hpp"
-#include "domain/state.hpp"
 #include "domain/transform/builtins.hpp"
 #include "domain/transform/pipeline.hpp"
 #include "hardware/pio.h"
@@ -8,7 +7,6 @@
 #include "joybus_pad.pio.h"
 #include "link/console_client.hpp"
 #include "link/pad_client.hpp"
-#include "link/shared/shared_pad_hub.hpp"
 #include "pico/bootrom.h"
 #include "pico/stdlib.h"
 #include <cstdio>
@@ -38,8 +36,7 @@ void handle_boot_btn_if_requested() {
     g_boot_btn_requested = false;
     busy_wait_ms(100);
     if (gpio_get(BOOT_BTN_PIN) == 0) {
-        printf("M,%lu,BOOTSEL button pressed. Entering USB boot mode\n",
-               (unsigned long)time_us_32());
+        printf("[SYS] BOOTSEL button pressed. Entering USB boot mode.\n");
         reset_usb_boot(0, 0);
     }
 }
@@ -57,54 +54,248 @@ void init_led() {
     gpio_put(ONBOARD_LED_PIN, 1);
 }
 
-// ─── ログ出力 ───
+// ─── ヘルパー ───
 
-void print_csv_header() {
-    printf("# debug_probe v1\n");
-    printf("# format: T,timestamp_us,port,dir,len,hex_data[,pm=P{n}/C{n}/R{n}]\n");
-    printf("# format: S,timestamp_us,from_state,to_state\n");
-    printf("# format: M,timestamp_us,message\n");
-    printf("# format: U,timestamp_us,port,polls,ok,timeout\n");
+const char *poll_mode_str(uint8_t pm) {
+    switch (pm) {
+    case 0: return "Mode0";
+    case 1: return "Mode1";
+    case 2: return "Mode2";
+    case 3: return "Mode3";
+    case 4: return "Mode4";
+    default: return "Mode?";
+    }
 }
+
+const char *rumble_mode_str(uint8_t rm) {
+    switch (rm) {
+    case 0: return "Off";
+    case 1: return "On";
+    case 2: return "Brake";
+    default: return "?";
+    }
+}
+
+// Id応答(3バイト)の簡易解釈
+const char *id_description(const uint8_t *data, uint8_t len) {
+    if (len >= 2) {
+        uint16_t dev = (static_cast<uint16_t>(data[0]) << 8) | data[1];
+        if (dev == 0x0900) return "GC standard controller";
+        if (dev == 0x0800) return "GC keyboard";
+        if (dev == 0x0920) return "GC wireless controller";
+    }
+    return "unknown device";
+}
+
+// ボタン文字列の生成（押されているもののみ + でつなぐ）
+// Status/Origin/Recalibrateの先頭2バイト(status word)からデコード
+// Status wordのビットレイアウト (LE):
+//   byte0: [OriginNotSent, ErrorLatched, Always1, UseCtrlOrigin, Start, Y, X, B]
+//   byte1: [A, L-dig, R-dig, Z, DpadUp, DpadDown, DpadRight, DpadLeft]
+void format_buttons(const uint8_t *status_word, char *buf, size_t buf_size) {
+    struct { uint16_t mask; const char *name; } button_map[] = {
+        {0x0001, "B"},
+        {0x0002, "X"},
+        {0x0004, "Y"},
+        {0x0008, "Start"},
+        {0x0100, "A"},
+        {0x0200, "L"},
+        {0x0400, "R"},
+        {0x0800, "Z"},
+        {0x1000, "DpadUp"},
+        {0x2000, "DpadDown"},
+        {0x4000, "DpadRight"},
+        {0x8000, "DpadLeft"},
+    };
+
+    uint16_t sw = static_cast<uint16_t>(status_word[0]) | (static_cast<uint16_t>(status_word[1]) << 8);
+    buf[0] = '\0';
+    bool first = true;
+    for (const auto &b : button_map) {
+        if (sw & b.mask) {
+            if (!first) {
+                strncat(buf, "+", buf_size - strlen(buf) - 1);
+            }
+            strncat(buf, b.name, buf_size - strlen(buf) - 1);
+            first = false;
+        }
+    }
+    if (first) {
+        strncpy(buf, "----", buf_size);
+        buf[buf_size - 1] = '\0';
+    }
+}
+
+// Origin/Recalibrate応答(10バイト)のデコード: stick, cstick, L, R
+void format_origin_data(const uint8_t *data, uint8_t len, char *buf, size_t buf_size) {
+    if (len >= 10) {
+        char btn_buf[64];
+        format_buttons(data, btn_buf, sizeof(btn_buf));
+        snprintf(buf, buf_size, "stick=(%u,%u) cstick=(%u,%u) L=%u R=%u buttons=%s",
+                 data[2], data[3], data[4], data[5], data[6], data[7], btn_buf);
+    } else {
+        // データ不足: hex dump
+        buf[0] = '\0';
+        for (uint8_t i = 0; i < len; i++) {
+            char hex[4];
+            snprintf(hex, sizeof(hex), "%s%02X", i > 0 ? " " : "", data[i]);
+            strncat(buf, hex, buf_size - strlen(buf) - 1);
+        }
+    }
+}
+
+// Status応答(8バイト)のデコード: PollModeに応じて解釈を変える
+void format_status_data(const uint8_t *data, uint8_t len, uint8_t pm, char *buf, size_t buf_size) {
+    if (len < 8) {
+        buf[0] = '\0';
+        for (uint8_t i = 0; i < len; i++) {
+            char hex[4];
+            snprintf(hex, sizeof(hex), "%s%02X", i > 0 ? " " : "", data[i]);
+            strncat(buf, hex, buf_size - strlen(buf) - 1);
+        }
+        return;
+    }
+
+    char btn_buf[64];
+    format_buttons(data, btn_buf, sizeof(btn_buf));
+
+    uint8_t stick_x = data[2], stick_y = data[3];
+    uint8_t cx, cy, la, ra;
+
+    switch (pm) {
+    case 3: // Mode3: full c-stick, full L/R (no A/B)
+        cx = data[4]; cy = data[5]; la = data[6]; ra = data[7];
+        snprintf(buf, buf_size, "stick=(%u,%u) cstick=(%u,%u) L=%u R=%u buttons=%s",
+                 stick_x, stick_y, cx, cy, la, ra, btn_buf);
+        break;
+    case 0: // Mode0: full c-stick, 4bit L/R/A/B
+        cx = data[4]; cy = data[5];
+        la = (data[6] >> 4) & 0x0F; ra = data[6] & 0x0F;
+        snprintf(buf, buf_size, "stick=(%u,%u) cstick=(%u,%u) L=0x%02X R=0x%02X buttons=%s",
+                 stick_x, stick_y, cx, cy, la, ra, btn_buf);
+        break;
+    case 1: // Mode1: 4bit c-stick, full L/R, 4bit A/B
+        cx = (data[4] >> 4) & 0x0F; cy = data[4] & 0x0F;
+        la = data[5]; ra = data[6];
+        snprintf(buf, buf_size, "stick=(%u,%u) cstick=(0x%X,0x%X) L=%u R=%u buttons=%s",
+                 stick_x, stick_y, cx, cy, la, ra, btn_buf);
+        break;
+    case 2: // Mode2: 4bit c-stick, 4bit L/R, full A/B
+        cx = (data[4] >> 4) & 0x0F; cy = data[4] & 0x0F;
+        la = (data[5] >> 4) & 0x0F; ra = data[5] & 0x0F;
+        snprintf(buf, buf_size, "stick=(%u,%u) cstick=(0x%X,0x%X) L=0x%X R=0x%X buttons=%s",
+                 stick_x, stick_y, cx, cy, la, ra, btn_buf);
+        break;
+    case 4: // Mode4: full c-stick, full A/B (no L/R)
+        cx = data[4]; cy = data[5];
+        snprintf(buf, buf_size, "stick=(%u,%u) cstick=(%u,%u) A=%u B=%u buttons=%s",
+                 stick_x, stick_y, cx, cy, data[6], data[7], btn_buf);
+        break;
+    default:
+        snprintf(buf, buf_size, "stick=(%u,%u) buttons=%s", stick_x, stick_y, btn_buf);
+        break;
+    }
+}
+
+// ─── ログ出力（平文） ───
 
 void print_log_entry(const debug_log::LogEntry &e) {
     using debug_log::Port;
     using debug_log::Dir;
 
-    const char port_char = (e.port == Port::Pad) ? 'P' : 'C';
+    const char *tag = (e.port == Port::Pad) ? "[PAD]" : "[CON]";
 
     if (e.is_state) {
-        // S行: 状態遷移 — state_str は "from -> to" 形式
-        // " -> " で分割して from/to を取得
-        char buf[48];
-        strncpy(buf, e.state_str, sizeof(buf));
-        buf[sizeof(buf) - 1] = '\0';
-        char *arrow = strstr(buf, " -> ");
-        if (arrow) {
-            *arrow = '\0';
-            const char *from_state = buf;
-            const char *to_state = arrow + 4;
-            printf("S,%lu,%s,%s\n", (unsigned long)e.timestamp_us, from_state, to_state);
-        } else {
-            // フォールバック: パース不能ならM行で出力
-            printf("M,%lu,%s\n", (unsigned long)e.timestamp_us, e.state_str);
-        }
+        // 状態遷移: [PAD] from → to
+        printf("%s %s\n", tag, e.state_str);
     } else if (e.is_timeout) {
-        // M行: タイムアウトメッセージ
-        printf("M,%lu,%c TIMEOUT %s\n", (unsigned long)e.timestamp_us, port_char, e.state_str);
+        // タイムアウト: [PAD] TIMEOUT message
+        printf("%s TIMEOUT %s\n", tag, e.state_str);
     } else {
-        // T行: データフレーム
-        const char dir_char = (e.dir == Dir::TX) ? 'T' : 'R';
-        printf("T,%lu,%c,%c,%u,", (unsigned long)e.timestamp_us, port_char, dir_char, e.data_len);
-        for (uint8_t i = 0; i < e.data_len; i++) {
-            if (i > 0) printf(" ");
-            printf("%02X", e.data[i]);
+        // データフレーム
+        const char *cmd = debug_log::cmd_name(e.command_byte);
+
+        if (e.port == Port::Pad && e.dir == Dir::TX) {
+            // [PAD] >> Cmd [ModeN, Rumble=X] (N bytes)
+            if (e.has_poll_mode) {
+                printf("%s >> %s [%s, Rumble=%s] (%u bytes)\n", tag, cmd,
+                       poll_mode_str(e.poll_mode), rumble_mode_str(e.rumble_mode), e.data_len);
+            } else {
+                printf("%s >> %s (%u bytes)\n", tag, cmd, e.data_len);
+            }
+        } else if (e.port == Port::Pad && e.dir == Dir::RX) {
+            // [PAD] << Cmd: decoded_data
+            char decoded[128];
+            if (e.command_byte == 0x00) {
+                // Id: hex + description
+                char hex[32] = "";
+                for (uint8_t i = 0; i < e.data_len; i++) {
+                    char h[4];
+                    snprintf(h, sizeof(h), "%s%02X", i > 0 ? " " : "", e.data[i]);
+                    strncat(hex, h, sizeof(hex) - strlen(hex) - 1);
+                }
+                snprintf(decoded, sizeof(decoded), "%s (%s)", hex, id_description(e.data, e.data_len));
+            } else if (e.command_byte == 0x41 || e.command_byte == 0x42) {
+                // Origin/Recalibrate
+                format_origin_data(e.data, e.data_len, decoded, sizeof(decoded));
+            } else if (e.command_byte == 0x40) {
+                // Status
+                if (e.has_poll_mode) {
+                    char status_data[128];
+                    format_status_data(e.data, e.data_len, e.poll_mode, status_data, sizeof(status_data));
+                    snprintf(decoded, sizeof(decoded), "[%s]: %s", poll_mode_str(e.poll_mode), status_data);
+                } else {
+                    format_status_data(e.data, e.data_len, 3, decoded, sizeof(decoded));
+                }
+            } else {
+                // Unknown: hex dump
+                decoded[0] = '\0';
+                for (uint8_t i = 0; i < e.data_len; i++) {
+                    char h[4];
+                    snprintf(h, sizeof(h), "%s%02X", i > 0 ? " " : "", e.data[i]);
+                    strncat(decoded, h, sizeof(decoded) - strlen(decoded) - 1);
+                }
+            }
+            printf("%s << %s: %s\n", tag, cmd, decoded);
+        } else if (e.port == Port::Console && e.dir == Dir::RX) {
+            // [CON] << Cmd request  or  [CON] << Status [ModeN, Rumble=X]
+            if (e.command_byte == 0x40 && e.has_poll_mode) {
+                printf("%s << %s [%s, Rumble=%s]\n", tag, cmd,
+                       poll_mode_str(e.poll_mode), rumble_mode_str(e.rumble_mode));
+            } else {
+                printf("%s << %s request\n", tag, cmd);
+            }
+        } else if (e.port == Port::Console && e.dir == Dir::TX) {
+            // [CON] >> Cmd: decoded_data
+            char decoded[128];
+            if (e.command_byte == 0x00) {
+                char hex[32] = "";
+                for (uint8_t i = 0; i < e.data_len; i++) {
+                    char h[4];
+                    snprintf(h, sizeof(h), "%s%02X", i > 0 ? " " : "", e.data[i]);
+                    strncat(hex, h, sizeof(hex) - strlen(hex) - 1);
+                }
+                snprintf(decoded, sizeof(decoded), "%s", hex);
+            } else if (e.command_byte == 0x41 || e.command_byte == 0x42) {
+                format_origin_data(e.data, e.data_len, decoded, sizeof(decoded));
+            } else if (e.command_byte == 0x40) {
+                if (e.has_poll_mode) {
+                    char status_data[128];
+                    format_status_data(e.data, e.data_len, e.poll_mode, status_data, sizeof(status_data));
+                    snprintf(decoded, sizeof(decoded), "[%s]: %s", poll_mode_str(e.poll_mode), status_data);
+                } else {
+                    format_status_data(e.data, e.data_len, 3, decoded, sizeof(decoded));
+                }
+            } else {
+                decoded[0] = '\0';
+                for (uint8_t i = 0; i < e.data_len; i++) {
+                    char h[4];
+                    snprintf(h, sizeof(h), "%s%02X", i > 0 ? " " : "", e.data[i]);
+                    strncat(decoded, h, sizeof(decoded) - strlen(decoded) - 1);
+                }
+            }
+            printf("%s >> %s: %s\n", tag, cmd, decoded);
         }
-        if (e.has_poll_mode) {
-            printf(",pm=P%u/C%u/R%u",
-                   e.poll_mode_pad, e.poll_mode_console, e.poll_mode_reply);
-        }
-        printf("\n");
     }
 }
 
@@ -116,6 +307,8 @@ struct StatusSummary {
     uint32_t con_rx_count;
     uint32_t con_tx_count;
     uint32_t interval_start_us;
+    uint8_t  last_poll_mode;
+    uint8_t  last_rumble_mode;
 
     void reset(uint32_t now_us) {
         pad_tx_count = 0;
@@ -124,6 +317,8 @@ struct StatusSummary {
         con_rx_count = 0;
         con_tx_count = 0;
         interval_start_us = now_us;
+        last_poll_mode = 0;
+        last_rumble_mode = 0;
     }
 };
 
@@ -149,6 +344,10 @@ void drain_ring(bool in_ready_state, StatusSummary &summary) {
                 summary.con_rx_count++;
             } else if (e.port == Port::Console && e.dir == Dir::TX) {
                 summary.con_tx_count++;
+            }
+            if (e.has_poll_mode) {
+                summary.last_poll_mode = e.poll_mode;
+                summary.last_rumble_mode = e.rumble_mode;
             }
             continue;
         }
@@ -213,12 +412,12 @@ int main() {
     gcinput::PadClient pad_client(host_to_pad_config, client_link);
     gcinput::ConsoleClient console_client(device_to_console_config, client_link);
 
-    print_csv_header();
-    printf("M,0,Debug Probe firmware ready\n");
-    printf("M,0,host_to_pad: PIO%d SM%u pin GP%u\n", pio_get_index(host_to_pad_config.pio),
+    printf("\n=== Debug Probe v2 ===\n\n");
+    printf("[SYS] host_to_pad: PIO%d SM%u pin GP%u\n", pio_get_index(host_to_pad_config.pio),
            host_to_pad_config.state_machine, PIN_TO_REAL_PAD);
-    printf("M,0,device_to_console: PIO%d SM%u pin GP%u\n", pio_get_index(device_to_console_config.pio),
+    printf("[SYS] device_to_console: PIO%d SM%u pin GP%u\n", pio_get_index(device_to_console_config.pio),
            device_to_console_config.state_machine, PIN_TO_REAL_CONSOLE);
+    printf("[SYS] Waiting for controller...\n\n");
 
     // Statusポーリングサマリー
     StatusSummary status_summary{};
@@ -249,25 +448,25 @@ int main() {
         // リングバッファドレイン
         drain_ring(in_ready_state, status_summary);
 
-        // Statusポーリングサマリー出力（Ready中のみ、500ms間隔）
+        // [POLL] サマリー出力（Ready中のみ、500ms間隔）
         if (in_ready_state &&
             (int32_t)(now_us - status_summary.interval_start_us) >= (int32_t)kSummaryIntervalUs) {
             if (status_summary.pad_tx_count > 0 || status_summary.con_tx_count > 0) {
-                printf("U,%lu,P,%lu,%lu,%lu\n",
-                       (unsigned long)now_us, (unsigned long)status_summary.pad_tx_count,
+                printf("[POLL] 500ms: PAD %lutx/%lurx/%luerr | CON %lurx/%lutx | %s Rumble=%s\n",
+                       (unsigned long)status_summary.pad_tx_count,
                        (unsigned long)status_summary.pad_rx_count,
-                       (unsigned long)status_summary.pad_timeout_count);
-                printf("U,%lu,C,%lu,%lu,0\n",
-                       (unsigned long)now_us, (unsigned long)status_summary.con_rx_count,
-                       (unsigned long)status_summary.con_tx_count);
+                       (unsigned long)status_summary.pad_timeout_count,
+                       (unsigned long)status_summary.con_rx_count,
+                       (unsigned long)status_summary.con_tx_count,
+                       poll_mode_str(status_summary.last_poll_mode),
+                       rumble_mode_str(status_summary.last_rumble_mode));
             }
             status_summary.reset(now_us);
         }
 
         // ドロップ警告
         if (debug_log::g_drop_count != last_reported_drops) {
-            printf("M,%lu,WARNING Ring buffer dropped %lu entries\n",
-                   (unsigned long)now_us,
+            printf("[SYS] WARNING: Ring buffer dropped %lu entries\n",
                    (unsigned long)(debug_log::g_drop_count - last_reported_drops));
             last_reported_drops = debug_log::g_drop_count;
         }
