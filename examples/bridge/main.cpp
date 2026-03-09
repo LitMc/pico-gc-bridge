@@ -286,12 +286,14 @@ int main() {
     gcinput::PadClient pad_client(host_to_pad_config, client_link);
     gcinput::ConsoleClient console_client(device_to_console_config, client_link);
 
+#ifdef GCINPUT_ENABLE_LOG
     printf("=== Bridge ready ===\n");
     printf("Mode: origin_fix (L+R+DUp+Start+Y to activate correction)\n");
     printf("host_to_pad: PIO%d SM%u pin GP%u\n", pio_get_index(host_to_pad_config.pio),
            host_to_pad_config.state_machine, PIN_TO_REAL_PAD);
     printf("device_to_console: PIO%d SM%u pin GP%u\n", pio_get_index(device_to_console_config.pio),
            device_to_console_config.state_machine, PIN_TO_REAL_CONSOLE);
+#endif
 
     // モード管理
     // origin_fix: 接続直後。Status に (128,128) を返してコンソールに原点を確定させる
@@ -332,12 +334,16 @@ int main() {
         // PAD状態変化の検知とログ出力
         auto cur_state = pad_client.current_state();
         if (cur_state != last_pad_state) {
+#ifdef GCINPUT_ENABLE_LOG
             printf("[PAD] state: %s -> %s\n", pad_state_name(last_pad_state),
                    pad_state_name(cur_state));
+#endif
             last_pad_state = cur_state;
+#ifdef GCINPUT_ENABLE_LOG
             if (cur_state == gcinput::PadClient::State::Ready) {
                 printf("[PAD] Controller connected.\n");
             }
+#endif
         }
 
         // Ready状態の検出
@@ -353,6 +359,7 @@ int main() {
         // リングバッファドレイン
         drain_ring(in_ready_state, status_summary);
 
+#ifdef GCINPUT_ENABLE_LOG
         // [POLL]サマリー出力（Ready中のみ、500ms間隔）
         if (in_ready_state &&
             (int32_t)(now_us - status_summary.interval_start_us) >= (int32_t)kSummaryIntervalUs) {
@@ -376,6 +383,7 @@ int main() {
                    (unsigned long)(debug_log::g_drop_count - last_reported_drops));
             last_reported_drops = debug_log::g_drop_count;
         }
+#endif
 
         // Origin/Recalibrate 受信時に原点コンテキストを更新
         const auto snapshot = client_link.real_pad_hub().load_original_snapshot();
@@ -387,7 +395,9 @@ int main() {
                 const auto oy = snapshot.origin.input.analog.stick_y;
                 origin_ctx.origin_x.store(ox, std::memory_order_release);
                 origin_ctx.origin_y.store(oy, std::memory_order_release);
+#ifdef GCINPUT_ENABLE_LOG
                 printf("Origin updated: (%u, %u)\n", ox, oy);
+#endif
             }
         }
 
@@ -408,7 +418,9 @@ int main() {
                         pipelines.status.set_stage_enabled(i, true);
                     }
                     rumble_override.start(1, now_us);
+#ifdef GCINPUT_ENABLE_LOG
                     printf("Mode: correction (pipeline active)\n");
+#endif
                 } else {
                     mode = BridgeMode::OriginFix;
                     pipelines.status.set_stage_enabled(kStageFixOrigin, true);
@@ -416,7 +428,9 @@ int main() {
                         pipelines.status.set_stage_enabled(i, false);
                     }
                     rumble_override.start(2, now_us);
+#ifdef GCINPUT_ENABLE_LOG
                     printf("Mode: origin_fix (L+R+DUp+Start+Y to activate correction)\n");
+#endif
                 }
             }
             prev_combo = combo_held;
@@ -469,11 +483,13 @@ int main() {
                 // S(tx): コンソールが実際に受け取る期待値
                 const auto [stx_x, stx_y] = forward_lut(tx_sx, tx_sy);
 
+#ifdef GCINPUT_ENABLE_LOG
                 printf("DBG [%s] origin=(%3u,%3u) raw=(%3u,%3u) norm=(%3u,%3u) clamp=(%3u,%3u) "
                        "scale=(%3u,%3u) lut=(%3u,%3u) tx=(%3u,%3u) S(tx)=(%3u,%3u)\n",
                        mode == BridgeMode::Correction ? "COR" : "FIX", ox, oy, raw_x, raw_y,
                        norm_x, norm_y, clamp_x, clamp_y, scale_x, scale_y, lut_x, lut_y, tx_sx,
                        tx_sy, stx_x, stx_y);
+#endif
             }
         }
 

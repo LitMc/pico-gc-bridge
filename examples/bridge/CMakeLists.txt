@@ -25,4 +25,9 @@ target_link_libraries(${PROJECT_NAME}
 pico_enable_stdio_uart(${PROJECT_NAME} 1) # UART経由のstdioを有効
 pico_enable_stdio_usb(${PROJECT_NAME} 0) # USB経由のstdioは無効
 
+# DebugビルドはログON、ReleaseビルドはログOFF
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    target_compile_definitions(${PROJECT_NAME} PRIVATE GCINPUT_ENABLE_LOG=1)
+endif()
+
 pico_add_extra_outputs(${PROJECT_NAME})

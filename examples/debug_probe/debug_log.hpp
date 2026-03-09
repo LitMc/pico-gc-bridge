@@ -30,6 +30,8 @@ inline volatile uint32_t g_ring_head = 0;
 inline uint32_t g_ring_tail = 0;
 inline uint32_t g_drop_count = 0;
 
+#ifdef GCINPUT_ENABLE_LOG
+
 inline void ring_push(LogEntry entry) {
     uint32_t next = (g_ring_head + 1) % kRingSize;
     if (next == g_ring_tail) {
@@ -101,6 +103,16 @@ inline void ring_push_timeout(Port port, const char *msg) {
     e.state_str[sizeof(e.state_str) - 1] = '\0';
     ring_push(e);
 }
+
+#else  // GCINPUT_ENABLE_LOG 未定義時はno-op
+
+inline void ring_push(LogEntry) {}
+inline void ring_push_data(Port, Dir, uint8_t, const uint8_t *, std::size_t) {}
+inline void ring_push_data_with_poll_mode(Port, Dir, uint8_t, const uint8_t *, std::size_t, uint8_t, uint8_t) {}
+inline void ring_push_state(Port, const char *) {}
+inline void ring_push_timeout(Port, const char *) {}
+
+#endif  // GCINPUT_ENABLE_LOG
 
 inline const char *cmd_name(uint8_t cmd) {
     switch (cmd) {
