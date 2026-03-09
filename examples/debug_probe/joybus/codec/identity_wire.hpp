@@ -73,7 +73,7 @@ encode_identity_bytes(const domain::PadIdentity &id) {
     runtime_flags |= poll_mode & kPollMask;
 
     std::array<uint8_t, kIdResponseSize> out{};
-    util::write_u16_le(device_capabilities, std::span<uint8_t, 2>{out.data(), 2});
+    util::write_u16_be(device_capabilities, std::span<uint8_t, 2>{out.data(), 2});
     out[2] = runtime_flags;
     return out;
 }
@@ -89,7 +89,7 @@ inline JoybusReply encode_reset_as_id(const domain::PadIdentity &id) {
 
 inline void update_capabilities_from_id_bytes(domain::PadIdentity &out,
                                               std::span<const uint8_t, kIdResponseSize> rx) {
-    const uint16_t device_capabilities = util::read_u16_le(rx.first<2>());
+    const uint16_t device_capabilities = util::read_u16_be(rx.first<2>());
     auto &capabilities = out.capabilities;
     capabilities.is_wireless = (device_capabilities & to_mask(IdCapabilityBits::IsWireless)) != 0;
     capabilities.supports_wireless_receive =
