@@ -12,6 +12,7 @@
 #include "pico/bootrom.h"
 #include "pico/stdlib.h"
 #include <cstdio>
+#include <cstring>
 
 namespace {
 
@@ -37,7 +38,8 @@ void handle_boot_btn_if_requested() {
     g_boot_btn_requested = false;
     busy_wait_ms(100);
     if (gpio_get(BOOT_BTN_PIN) == 0) {
-        printf("BOOTSEL button pressed. Entering USB boot mode...\n");
+        printf("M,%lu,BOOTSEL button pressed. Entering USB boot mode\n",
+               (unsigned long)time_us_32());
         reset_usb_boot(0, 0);
     }
 }
@@ -57,27 +59,46 @@ void init_led() {
 
 // ─── ログ出力 ───
 
+void print_csv_header() {
+    printf("# debug_probe v1\n");
+    printf("# format: T,timestamp_us,port,dir,len,hex_data\n");
+    printf("# format: S,timestamp_us,from_state,to_state\n");
+    printf("# format: M,timestamp_us,message\n");
+    printf("# format: U,timestamp_us,port,polls,ok,timeout\n");
+}
+
 void print_log_entry(const debug_log::LogEntry &e) {
     using debug_log::Port;
     using debug_log::Dir;
 
+    const char port_char = (e.port == Port::Pad) ? 'P' : 'C';
+
     if (e.is_state) {
-        printf("[%9luus] %s  state: %s\n", (unsigned long)e.timestamp_us,
-               e.port == Port::Pad ? "PAD" : "CON", e.state_str);
-    } else if (e.is_timeout) {
-        printf("[%9luus] %s  TIMEOUT %s\n", (unsigned long)e.timestamp_us,
-               e.port == Port::Pad ? "PAD" : "CON", e.state_str);
-    } else {
-        const char *port_str = (e.port == Port::Pad) ? "PAD" : "CON";
-        const char *dir_str = (e.dir == Dir::TX) ? "TX" : "RX";
-        printf("[%9luus] %s  %s %2uB:", (unsigned long)e.timestamp_us, port_str, dir_str,
-               e.data_len);
-        for (uint8_t i = 0; i < e.data_len; i++) {
-            printf(" %02X", e.data[i]);
+        // S行: 状態遷移 — state_str は "from -> to" 形式
+        // " -> " で分割して from/to を取得
+        char buf[48];
+        strncpy(buf, e.state_str, sizeof(buf));
+        buf[sizeof(buf) - 1] = '\0';
+        char *arrow = strstr(buf, " -> ");
+        if (arrow) {
+            *arrow = '\0';
+            const char *from_state = buf;
+            const char *to_state = arrow + 4;
+            printf("S,%lu,%s,%s\n", (unsigned long)e.timestamp_us, from_state, to_state);
+        } else {
+            // フォールバック: パース不能ならM行で出力
+            printf("M,%lu,%s\n", (unsigned long)e.timestamp_us, e.state_str);
         }
-        const char *name = debug_log::cmd_name(e.command_byte);
-        if (name[0] != 'U') { // "Unknown" でなければ
-            printf("  (%s)", name);
+    } else if (e.is_timeout) {
+        // M行: タイムアウトメッセージ
+        printf("M,%lu,%c TIMEOUT %s\n", (unsigned long)e.timestamp_us, port_char, e.state_str);
+    } else {
+        // T行: データフレーム
+        const char dir_char = (e.dir == Dir::TX) ? 'T' : 'R';
+        printf("T,%lu,%c,%c,%u,", (unsigned long)e.timestamp_us, port_char, dir_char, e.data_len);
+        for (uint8_t i = 0; i < e.data_len; i++) {
+            if (i > 0) printf(" ");
+            printf("%02X", e.data[i]);
         }
         printf("\n");
     }
@@ -188,11 +209,11 @@ int main() {
     gcinput::PadClient pad_client(host_to_pad_config, client_link);
     gcinput::ConsoleClient console_client(device_to_console_config, client_link);
 
-    printf("=== Debug Probe firmware ready ===\n");
-    printf("Joybus communication logger (passthrough bridge)\n");
-    printf("host_to_pad: PIO%d SM%u pin GP%u\n", pio_get_index(host_to_pad_config.pio),
+    print_csv_header();
+    printf("M,0,Debug Probe firmware ready\n");
+    printf("M,0,host_to_pad: PIO%d SM%u pin GP%u\n", pio_get_index(host_to_pad_config.pio),
            host_to_pad_config.state_machine, PIN_TO_REAL_PAD);
-    printf("device_to_console: PIO%d SM%u pin GP%u\n", pio_get_index(device_to_console_config.pio),
+    printf("M,0,device_to_console: PIO%d SM%u pin GP%u\n", pio_get_index(device_to_console_config.pio),
            device_to_console_config.state_machine, PIN_TO_REAL_CONSOLE);
 
     // Statusポーリングサマリー
@@ -228,12 +249,12 @@ int main() {
         if (in_ready_state &&
             (int32_t)(now_us - status_summary.interval_start_us) >= (int32_t)kSummaryIntervalUs) {
             if (status_summary.pad_tx_count > 0 || status_summary.con_tx_count > 0) {
-                printf("[%9luus] PAD  Status: %lu polls, %lu ok, %lu timeout\n",
+                printf("U,%lu,P,%lu,%lu,%lu\n",
                        (unsigned long)now_us, (unsigned long)status_summary.pad_tx_count,
                        (unsigned long)status_summary.pad_rx_count,
                        (unsigned long)status_summary.pad_timeout_count);
-                printf("[%9luus] CON  Status: %lu rx, %lu tx\n", (unsigned long)now_us,
-                       (unsigned long)status_summary.con_rx_count,
+                printf("U,%lu,C,%lu,%lu,0\n",
+                       (unsigned long)now_us, (unsigned long)status_summary.con_rx_count,
                        (unsigned long)status_summary.con_tx_count);
             }
             status_summary.reset(now_us);
@@ -241,7 +262,8 @@ int main() {
 
         // ドロップ警告
         if (debug_log::g_drop_count != last_reported_drops) {
-            printf("[WARNING] Ring buffer dropped %lu entries\n",
+            printf("M,%lu,WARNING Ring buffer dropped %lu entries\n",
+                   (unsigned long)now_us,
                    (unsigned long)(debug_log::g_drop_count - last_reported_drops));
             last_reported_drops = debug_log::g_drop_count;
         }
