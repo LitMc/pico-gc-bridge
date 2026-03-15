@@ -1,6 +1,7 @@
 #include "link/pad_client.hpp"
 #include "debug_log.hpp"
 #include "link/policy.hpp"
+#include <cstdio>
 
 namespace gcinput {
 void PadClient::load_reset_epoch_() { last_reset_epoch_ = link_.load_reset_epoch(); }
