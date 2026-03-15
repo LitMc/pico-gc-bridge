@@ -199,6 +199,52 @@ void format_status_data(const uint8_t *data, uint8_t len, uint8_t pm, char *buf,
 
 // ─── ログ出力（平文） ───
 
+// 送受信の方向を明示する矢印文字列を返す
+// PAD TX  = PICO -> PAD      (PicoがPADへ送信)
+// PAD RX  = PAD -> PICO      (PADからPicoが受信)
+// CON RX  = CONSOLE -> PICO  (ConsoleからPicoが受信)
+// CON TX  = PICO -> CONSOLE  (PicoがConsoleへ送信)
+const char *direction_str(debug_log::Port port, debug_log::Dir dir) {
+    using debug_log::Port;
+    using debug_log::Dir;
+    if (port == Port::Pad && dir == Dir::TX)      return "PICO -> PAD";
+    if (port == Port::Pad && dir == Dir::RX)      return "PAD -> PICO";
+    if (port == Port::Console && dir == Dir::RX)   return "CONSOLE -> PICO";
+    if (port == Port::Console && dir == Dir::TX)   return "PICO -> CONSOLE";
+    return "???";
+}
+
+// データをデコードして文字列にフォーマット
+void format_decoded(const debug_log::LogEntry &e, char *decoded, size_t buf_size) {
+    if (e.command_byte == 0x00) {
+        // Id: hex + description
+        char hex[32] = "";
+        for (uint8_t i = 0; i < e.data_len; i++) {
+            char h[4];
+            snprintf(h, sizeof(h), "%s%02X", i > 0 ? " " : "", e.data[i]);
+            strncat(hex, h, sizeof(hex) - strlen(hex) - 1);
+        }
+        snprintf(decoded, buf_size, "%s (%s)", hex, id_description(e.data, e.data_len));
+    } else if (e.command_byte == 0x41 || e.command_byte == 0x42) {
+        format_origin_data(e.data, e.data_len, decoded, buf_size);
+    } else if (e.command_byte == 0x40) {
+        if (e.has_poll_mode) {
+            char status_data[128];
+            format_status_data(e.data, e.data_len, e.poll_mode, status_data, sizeof(status_data));
+            snprintf(decoded, buf_size, "[%s]: %s", poll_mode_str(e.poll_mode), status_data);
+        } else {
+            format_status_data(e.data, e.data_len, 3, decoded, buf_size);
+        }
+    } else {
+        decoded[0] = '\0';
+        for (uint8_t i = 0; i < e.data_len; i++) {
+            char h[4];
+            snprintf(h, sizeof(h), "%s%02X", i > 0 ? " " : "", e.data[i]);
+            strncat(decoded, h, buf_size - strlen(decoded) - 1);
+        }
+    }
+}
+
 void print_log_entry(const debug_log::LogEntry &e) {
     using debug_log::Port;
     using debug_log::Dir;
@@ -206,95 +252,30 @@ void print_log_entry(const debug_log::LogEntry &e) {
     const char *tag = (e.port == Port::Pad) ? "[PAD]" : "[CON]";
 
     if (e.is_state) {
-        // 状態遷移: [PAD] from → to
         printf("%s %s\n", tag, e.state_str);
     } else if (e.is_timeout) {
-        // タイムアウト: [PAD] TIMEOUT message
         printf("%s TIMEOUT %s\n", tag, e.state_str);
     } else {
-        // データフレーム
         const char *cmd = debug_log::cmd_name(e.command_byte);
+        const char *arrow = direction_str(e.port, e.dir);
 
-        if (e.port == Port::Pad && e.dir == Dir::TX) {
-            // [PAD] >> Cmd [ModeN, Rumble=X] (N bytes)
+        bool is_request = (e.port == Port::Pad && e.dir == Dir::TX) ||
+                          (e.port == Port::Console && e.dir == Dir::RX);
+
+        if (is_request) {
+            // リクエスト（送信コマンド）: 方向 + コマンド名 + モード情報
             if (e.has_poll_mode) {
-                printf("%s >> %s [%s, Rumble=%s] (%u bytes)\n", tag, cmd,
-                       poll_mode_str(e.poll_mode), rumble_mode_str(e.rumble_mode), e.data_len);
-            } else {
-                printf("%s >> %s (%u bytes)\n", tag, cmd, e.data_len);
-            }
-        } else if (e.port == Port::Pad && e.dir == Dir::RX) {
-            // [PAD] << Cmd: decoded_data
-            char decoded[128];
-            if (e.command_byte == 0x00) {
-                // Id: hex + description
-                char hex[32] = "";
-                for (uint8_t i = 0; i < e.data_len; i++) {
-                    char h[4];
-                    snprintf(h, sizeof(h), "%s%02X", i > 0 ? " " : "", e.data[i]);
-                    strncat(hex, h, sizeof(hex) - strlen(hex) - 1);
-                }
-                snprintf(decoded, sizeof(decoded), "%s (%s)", hex, id_description(e.data, e.data_len));
-            } else if (e.command_byte == 0x41 || e.command_byte == 0x42) {
-                // Origin/Recalibrate
-                format_origin_data(e.data, e.data_len, decoded, sizeof(decoded));
-            } else if (e.command_byte == 0x40) {
-                // Status
-                if (e.has_poll_mode) {
-                    char status_data[128];
-                    format_status_data(e.data, e.data_len, e.poll_mode, status_data, sizeof(status_data));
-                    snprintf(decoded, sizeof(decoded), "[%s]: %s", poll_mode_str(e.poll_mode), status_data);
-                } else {
-                    format_status_data(e.data, e.data_len, 3, decoded, sizeof(decoded));
-                }
-            } else {
-                // Unknown: hex dump
-                decoded[0] = '\0';
-                for (uint8_t i = 0; i < e.data_len; i++) {
-                    char h[4];
-                    snprintf(h, sizeof(h), "%s%02X", i > 0 ? " " : "", e.data[i]);
-                    strncat(decoded, h, sizeof(decoded) - strlen(decoded) - 1);
-                }
-            }
-            printf("%s << %s: %s\n", tag, cmd, decoded);
-        } else if (e.port == Port::Console && e.dir == Dir::RX) {
-            // [CON] << Cmd request  or  [CON] << Status [ModeN, Rumble=X]
-            if (e.command_byte == 0x40 && e.has_poll_mode) {
-                printf("%s << %s [%s, Rumble=%s]\n", tag, cmd,
+                printf("%s  %s  %s [%s, Rumble=%s]\n", arrow, cmd,
+                       (e.data_len > 0) ? "" : "",
                        poll_mode_str(e.poll_mode), rumble_mode_str(e.rumble_mode));
             } else {
-                printf("%s << %s request\n", tag, cmd);
+                printf("%s  %s\n", arrow, cmd);
             }
-        } else if (e.port == Port::Console && e.dir == Dir::TX) {
-            // [CON] >> Cmd: decoded_data
+        } else {
+            // レスポンス（受信データ）: 方向 + コマンド名 + デコードデータ
             char decoded[128];
-            if (e.command_byte == 0x00) {
-                char hex[32] = "";
-                for (uint8_t i = 0; i < e.data_len; i++) {
-                    char h[4];
-                    snprintf(h, sizeof(h), "%s%02X", i > 0 ? " " : "", e.data[i]);
-                    strncat(hex, h, sizeof(hex) - strlen(hex) - 1);
-                }
-                snprintf(decoded, sizeof(decoded), "%s", hex);
-            } else if (e.command_byte == 0x41 || e.command_byte == 0x42) {
-                format_origin_data(e.data, e.data_len, decoded, sizeof(decoded));
-            } else if (e.command_byte == 0x40) {
-                if (e.has_poll_mode) {
-                    char status_data[128];
-                    format_status_data(e.data, e.data_len, e.poll_mode, status_data, sizeof(status_data));
-                    snprintf(decoded, sizeof(decoded), "[%s]: %s", poll_mode_str(e.poll_mode), status_data);
-                } else {
-                    format_status_data(e.data, e.data_len, 3, decoded, sizeof(decoded));
-                }
-            } else {
-                decoded[0] = '\0';
-                for (uint8_t i = 0; i < e.data_len; i++) {
-                    char h[4];
-                    snprintf(h, sizeof(h), "%s%02X", i > 0 ? " " : "", e.data[i]);
-                    strncat(decoded, h, sizeof(decoded) - strlen(decoded) - 1);
-                }
-            }
-            printf("%s >> %s: %s\n", tag, cmd, decoded);
+            format_decoded(e, decoded, sizeof(decoded));
+            printf("%s  %s: %s\n", arrow, cmd, decoded);
         }
     }
 }
@@ -324,9 +305,37 @@ struct StatusSummary {
 
 constexpr uint32_t kSummaryIntervalUs = 500'000; // 500ms
 
+// CONハンドシェイク追跡: コンソール接続時の初回Id/Origin/Statusをセクション表示
+struct ConsoleHandshakeTracker {
+    bool header_printed;
+    bool polling_phase;  // 初回Status RX+TX完了後にポーリングフェーズへ移行
+
+    void reset() {
+        header_printed = false;
+        polling_phase = false;
+    }
+
+    // CON側のコマンドが来たときにヘッダ出力判定
+    // ポーリングフェーズ移行後は何もしない
+    void on_console_event(uint8_t cmd) {
+        if (polling_phase) return;
+
+        if (!header_printed) {
+            printf("\n=== Console handshake ===\n\n");
+            header_printed = true;
+        }
+    }
+
+    // 初回Statusの応答まで出力したらポーリングフェーズへ
+    void enter_polling() {
+        polling_phase = true;
+        printf("\n=== Ready (polling) ===\n\n");
+    }
+};
+
 // mainループでのドレイン
 // Ready状態のStatusコマンドはサマリーに集計、それ以外は全出力
-void drain_ring(bool in_ready_state, StatusSummary &summary) {
+void drain_ring(bool in_ready_state, StatusSummary &summary, ConsoleHandshakeTracker &con_hs) {
     using debug_log::Port;
     using debug_log::Dir;
 
@@ -334,8 +343,20 @@ void drain_ring(bool in_ready_state, StatusSummary &summary) {
         const debug_log::LogEntry &e = debug_log::g_ring[debug_log::g_ring_tail];
         debug_log::g_ring_tail = (debug_log::g_ring_tail + 1) % debug_log::kRingSize;
 
-        // Ready状態のStatusコマンドデータログはサマリーに集計
+        // Ready状態のStatusコマンドデータログ
         if (in_ready_state && !e.is_state && !e.is_timeout && e.command_byte == 0x40) {
+            // CONハンドシェイク中（まだポーリングに入っていない）なら個別出力
+            if (!con_hs.polling_phase && e.port == Port::Console) {
+                con_hs.on_console_event(e.command_byte);
+                print_log_entry(e);
+                // CON TX（Picoからの応答）が出たらハンドシェイク完了
+                if (e.dir == Dir::TX) {
+                    con_hs.enter_polling();
+                }
+                continue;
+            }
+
+            // ポーリングフェーズ: サマリーに集計
             if (e.port == Port::Pad && e.dir == Dir::TX) {
                 summary.pad_tx_count++;
             } else if (e.port == Port::Pad && e.dir == Dir::RX) {
@@ -356,6 +377,11 @@ void drain_ring(bool in_ready_state, StatusSummary &summary) {
         if (in_ready_state && e.is_timeout && e.command_byte == 0x40) {
             summary.pad_timeout_count++;
             continue;
+        }
+
+        // CONハンドシェイクヘッダ出力（Id, Origin等の非Statusコマンド）
+        if (e.port == Port::Console && !e.is_state && !e.is_timeout) {
+            con_hs.on_console_event(e.command_byte);
         }
 
         print_log_entry(e);
@@ -425,6 +451,10 @@ int main() {
     bool in_ready_state = false;
     bool was_ready = false;
 
+    // CONハンドシェイク追跡
+    ConsoleHandshakeTracker con_hs{};
+    con_hs.reset();
+
     // ドロップカウント表示用
     uint32_t last_reported_drops = 0;
 
@@ -440,13 +470,14 @@ int main() {
         if (ready_now && !was_ready) {
             in_ready_state = true;
             status_summary.reset(now_us);
+            con_hs.reset();  // PADがReadyになったらCONハンドシェイク追跡をリセット
         } else if (!ready_now && was_ready) {
             in_ready_state = false;
         }
         was_ready = ready_now;
 
         // リングバッファドレイン
-        drain_ring(in_ready_state, status_summary);
+        drain_ring(in_ready_state, status_summary, con_hs);
 
         // [POLL] サマリー出力（Ready中のみ、500ms間隔）
         if (in_ready_state &&
