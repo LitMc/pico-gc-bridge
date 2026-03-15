@@ -70,8 +70,20 @@ class PadClient {
         }
 
         // PAD TX: パッドへの送信をログ
-        debug_log::ring_push_data(debug_log::Port::Pad, debug_log::Dir::TX,
-                                  static_cast<uint8_t>(request.command()), bytes.data(), bytes.size());
+        if (request.command() == joybus::Command::Status && bytes.size() >= 3) {
+            // Status: bytes[1]のbit[2:0]=PollMode, bytes[1]のbit[4:3]=RumbleMode
+            last_tx_poll_mode_ = bytes[1] & 0x07;
+            last_tx_rumble_mode_ = (bytes[1] >> 3) & 0x03;
+            debug_log::ring_push_data_with_poll_mode(debug_log::Port::Pad, debug_log::Dir::TX,
+                                                     static_cast<uint8_t>(request.command()),
+                                                     bytes.data(), bytes.size(),
+                                                     last_tx_poll_mode_, last_tx_rumble_mode_);
+        } else {
+            last_tx_poll_mode_ = 0;
+            last_tx_rumble_mode_ = 0;
+            debug_log::ring_push_data(debug_log::Port::Pad, debug_log::Dir::TX,
+                                      static_cast<uint8_t>(request.command()), bytes.data(), bytes.size());
+        }
         return true;
     }
 
@@ -136,6 +148,8 @@ class PadClient {
     uint32_t response_deadline_us_{0};
 
     std::atomic<uint8_t> await_command_{static_cast<uint8_t>(joybus::Command::Invalid)};
+    uint8_t last_tx_poll_mode_{0};
+    uint8_t last_tx_rumble_mode_{0};
 
     // 応答を待っているコマンド
     joybus::Command awaiting_command_() const {

@@ -7,7 +7,8 @@
       "description": "Debug build into ./build",
       "binaryDir": "build",
       "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Debug"
+        "CMAKE_BUILD_TYPE": "Debug",
+        "PICO_SDK_PATH": "${sourceDir}/../pico-sdk"
       }
     },
     {
@@ -16,7 +17,8 @@
       "description": "Release build into ./build-release",
       "binaryDir": "build-release",
       "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Release"
+        "CMAKE_BUILD_TYPE": "Release",
+        "PICO_SDK_PATH": "${sourceDir}/../pico-sdk"
       }
     }
   ],

@@ -1,3 +1,4 @@
+#include "debug_log.hpp"
 #include "domain/state.hpp"
 #include "domain/transform/builtins.hpp"
 #include "domain/transform/correction.hpp"
@@ -12,6 +13,7 @@
 #include "pico/bootrom.h"
 #include "pico/stdlib.h"
 #include <cstdio>
+#include <cstring>
 
 namespace {
 // 通電確認用のオンボードLED
@@ -99,6 +101,114 @@ struct RumbleOverride {
         return gcinput::domain::RumbleMode::Off;
     }
 };
+
+// ─── PadClient状態名 ───
+const char *pad_state_name(gcinput::PadClient::State s) {
+    switch (s) {
+    case gcinput::PadClient::State::Disconnected:     return "Disconnected";
+    case gcinput::PadClient::State::Resetting:        return "Resetting";
+    case gcinput::PadClient::State::BootId:           return "BootId";
+    case gcinput::PadClient::State::BootOrigin:       return "BootOrigin";
+    case gcinput::PadClient::State::BootRecalibrate:  return "BootRecalibrate";
+    case gcinput::PadClient::State::WarmStatus:       return "WarmStatus";
+    case gcinput::PadClient::State::Ready:            return "Ready";
+    case gcinput::PadClient::State::RelayOrigin:      return "RelayOrigin";
+    case gcinput::PadClient::State::RelayRecalibrate: return "RelayRecalibrate";
+    default: return "?";
+    }
+}
+
+// ─── 平文ログ出力 ───
+
+void print_log_entry(const debug_log::LogEntry &e) {
+    using debug_log::Port;
+    using debug_log::Dir;
+
+    const char *port_tag = (e.port == Port::Pad) ? "[PAD]" : "[CON]";
+
+    if (e.is_state) {
+        printf("%s %s\n", port_tag, e.state_str);
+    } else if (e.is_timeout) {
+        printf("%s TIMEOUT %s\n", port_tag, e.state_str);
+    } else {
+        const char *dir_str = (e.dir == Dir::TX) ? ">>" : "<<";
+        const char *cmd = debug_log::cmd_name(e.command_byte);
+        printf("%s %s %s", port_tag, dir_str, cmd);
+        if (e.data_len > 0) {
+            printf(":");
+            for (uint8_t i = 0; i < e.data_len; i++) {
+                printf(" %02X", e.data[i]);
+            }
+        }
+        if (e.has_poll_mode) {
+            printf(" (Mode%u Rumble=%u)", e.poll_mode, e.rumble_mode);
+        }
+        printf(" (%u bytes)\n", e.data_len);
+    }
+}
+
+// ─── Ready状態用 Statusポーリングサマリー ───
+struct StatusSummary {
+    uint32_t pad_tx_count;
+    uint32_t pad_rx_count;
+    uint32_t pad_timeout_count;
+    uint32_t con_rx_count;
+    uint32_t con_tx_count;
+    uint32_t interval_start_us;
+    uint8_t last_poll_mode;
+    uint8_t last_rumble_mode;
+
+    void reset(uint32_t now_us) {
+        pad_tx_count = 0;
+        pad_rx_count = 0;
+        pad_timeout_count = 0;
+        con_rx_count = 0;
+        con_tx_count = 0;
+        interval_start_us = now_us;
+        last_poll_mode = 0;
+        last_rumble_mode = 0;
+    }
+};
+
+constexpr uint32_t kSummaryIntervalUs = 500'000; // 500ms
+
+// mainループでのドレイン
+// Ready状態のStatusコマンドはサマリーに集計、それ以外は全出力
+void drain_ring(bool in_ready_state, StatusSummary &summary) {
+    using debug_log::Port;
+    using debug_log::Dir;
+
+    while (debug_log::g_ring_tail != debug_log::g_ring_head) {
+        const debug_log::LogEntry &e = debug_log::g_ring[debug_log::g_ring_tail];
+        debug_log::g_ring_tail = (debug_log::g_ring_tail + 1) % debug_log::kRingSize;
+
+        // Ready状態のStatusコマンドデータログはサマリーに集計
+        if (in_ready_state && !e.is_state && !e.is_timeout && e.command_byte == 0x40) {
+            if (e.port == Port::Pad && e.dir == Dir::TX) {
+                summary.pad_tx_count++;
+            } else if (e.port == Port::Pad && e.dir == Dir::RX) {
+                summary.pad_rx_count++;
+            } else if (e.port == Port::Console && e.dir == Dir::RX) {
+                summary.con_rx_count++;
+                if (e.has_poll_mode) {
+                    summary.last_poll_mode = e.poll_mode;
+                }
+            } else if (e.port == Port::Console && e.dir == Dir::TX) {
+                summary.con_tx_count++;
+            }
+            continue;
+        }
+
+        // タイムアウトログもReady Statusならサマリーにカウントのみ
+        if (in_ready_state && e.is_timeout && e.command_byte == 0x40) {
+            summary.pad_timeout_count++;
+            continue;
+        }
+
+        print_log_entry(e);
+    }
+}
+
 } // namespace
 
 int main() {
@@ -176,12 +286,14 @@ int main() {
     gcinput::PadClient pad_client(host_to_pad_config, client_link);
     gcinput::ConsoleClient console_client(device_to_console_config, client_link);
 
-    printf("Bridge firmware ready.\n");
+#ifdef GCINPUT_ENABLE_LOG
+    printf("=== Bridge ready ===\n");
     printf("Mode: origin_fix (L+R+DUp+Start+Y to activate correction)\n");
     printf("host_to_pad: PIO%d SM%u pin GP%u\n", pio_get_index(host_to_pad_config.pio),
            host_to_pad_config.state_machine, PIN_TO_REAL_PAD);
     printf("device_to_console: PIO%d SM%u pin GP%u\n", pio_get_index(device_to_console_config.pio),
            device_to_console_config.state_machine, PIN_TO_REAL_CONSOLE);
+#endif
 
     // モード管理
     // origin_fix: 接続直後。Status に (128,128) を返してコンソールに原点を確定させる
@@ -189,13 +301,24 @@ int main() {
     enum class BridgeMode : uint8_t { OriginFix, Correction };
     BridgeMode mode = BridgeMode::OriginFix;
 
-    bool is_pad_connected = false;
     bool prev_combo = false;
     RumbleOverride rumble_override{};
     uint32_t last_origin_publish_count = 0;
     uint32_t last_tx_publish_count = 0;
     uint32_t last_debug_log_us = 0;
     constexpr uint32_t kDebugLogIntervalUs = 500'000; // 500ms間隔
+
+    // PAD状態変化検知
+    auto last_pad_state = gcinput::PadClient::State::Disconnected;
+
+    // Statusポーリングサマリー
+    StatusSummary status_summary{};
+    status_summary.reset(0);
+    bool in_ready_state = false;
+    bool was_ready = false;
+
+    // ドロップカウント表示用
+    uint32_t last_reported_drops = 0;
 
     while (true) {
         handle_boot_btn_if_requested();
@@ -208,6 +331,60 @@ int main() {
         }
         pad_client.tick(now_us, console_state);
 
+        // PAD状態変化の検知とログ出力
+        auto cur_state = pad_client.current_state();
+        if (cur_state != last_pad_state) {
+#ifdef GCINPUT_ENABLE_LOG
+            printf("[PAD] state: %s -> %s\n", pad_state_name(last_pad_state),
+                   pad_state_name(cur_state));
+#endif
+            last_pad_state = cur_state;
+#ifdef GCINPUT_ENABLE_LOG
+            if (cur_state == gcinput::PadClient::State::Ready) {
+                printf("[PAD] Controller connected.\n");
+            }
+#endif
+        }
+
+        // Ready状態の検出
+        const bool ready_now = (cur_state == gcinput::PadClient::State::Ready);
+        if (ready_now && !was_ready) {
+            in_ready_state = true;
+            status_summary.reset(now_us);
+        } else if (!ready_now && was_ready) {
+            in_ready_state = false;
+        }
+        was_ready = ready_now;
+
+        // リングバッファドレイン
+        drain_ring(in_ready_state, status_summary);
+
+#ifdef GCINPUT_ENABLE_LOG
+        // [POLL]サマリー出力（Ready中のみ、500ms間隔）
+        if (in_ready_state &&
+            (int32_t)(now_us - status_summary.interval_start_us) >= (int32_t)kSummaryIntervalUs) {
+            if (status_summary.pad_tx_count > 0 || status_summary.con_tx_count > 0) {
+                printf("[POLL] %lums: PAD %lutx/%lurx/%luerr | CON %lurx/%lutx | Mode%u Rumble=%s\n",
+                       (unsigned long)(kSummaryIntervalUs / 1000),
+                       (unsigned long)status_summary.pad_tx_count,
+                       (unsigned long)status_summary.pad_rx_count,
+                       (unsigned long)status_summary.pad_timeout_count,
+                       (unsigned long)status_summary.con_rx_count,
+                       (unsigned long)status_summary.con_tx_count,
+                       status_summary.last_poll_mode,
+                       (console_state.rumble_mode == gcinput::domain::RumbleMode::On) ? "On" : "Off");
+            }
+            status_summary.reset(now_us);
+        }
+
+        // ドロップ警告
+        if (debug_log::g_drop_count != last_reported_drops) {
+            printf("WARNING: Ring buffer dropped %lu entries\n",
+                   (unsigned long)(debug_log::g_drop_count - last_reported_drops));
+            last_reported_drops = debug_log::g_drop_count;
+        }
+#endif
+
         // Origin/Recalibrate 受信時に原点コンテキストを更新
         const auto snapshot = client_link.real_pad_hub().load_original_snapshot();
         if (snapshot.publish_count != last_origin_publish_count) {
@@ -218,7 +395,9 @@ int main() {
                 const auto oy = snapshot.origin.input.analog.stick_y;
                 origin_ctx.origin_x.store(ox, std::memory_order_release);
                 origin_ctx.origin_y.store(oy, std::memory_order_release);
+#ifdef GCINPUT_ENABLE_LOG
                 printf("Origin updated: (%u, %u)\n", ox, oy);
+#endif
             }
         }
 
@@ -239,7 +418,9 @@ int main() {
                         pipelines.status.set_stage_enabled(i, true);
                     }
                     rumble_override.start(1, now_us);
+#ifdef GCINPUT_ENABLE_LOG
                     printf("Mode: correction (pipeline active)\n");
+#endif
                 } else {
                     mode = BridgeMode::OriginFix;
                     pipelines.status.set_stage_enabled(kStageFixOrigin, true);
@@ -247,7 +428,9 @@ int main() {
                         pipelines.status.set_stage_enabled(i, false);
                     }
                     rumble_override.start(2, now_us);
+#ifdef GCINPUT_ENABLE_LOG
                     printf("Mode: origin_fix (L+R+DUp+Start+Y to activate correction)\n");
+#endif
                 }
             }
             prev_combo = combo_held;
@@ -300,22 +483,16 @@ int main() {
                 // S(tx): コンソールが実際に受け取る期待値
                 const auto [stx_x, stx_y] = forward_lut(tx_sx, tx_sy);
 
+#ifdef GCINPUT_ENABLE_LOG
                 printf("DBG [%s] origin=(%3u,%3u) raw=(%3u,%3u) norm=(%3u,%3u) clamp=(%3u,%3u) "
                        "scale=(%3u,%3u) lut=(%3u,%3u) tx=(%3u,%3u) S(tx)=(%3u,%3u)\n",
                        mode == BridgeMode::Correction ? "COR" : "FIX", ox, oy, raw_x, raw_y,
                        norm_x, norm_y, clamp_x, clamp_y, scale_x, scale_y, lut_x, lut_y, tx_sx,
                        tx_sy, stx_x, stx_y);
+#endif
             }
         }
 
-        const bool ready = client_link.is_pad_ready();
-        if (!is_pad_connected && ready) {
-            printf("PadClient: console responses enabled.\n");
-            is_pad_connected = true;
-        } else if (is_pad_connected && !ready) {
-            printf("PadClient: console responses disabled.\n");
-            is_pad_connected = false;
-        }
         tight_loop_contents();
     }
 }

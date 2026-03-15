@@ -40,6 +40,9 @@ class PadClient {
         RelayRecalibrate,   // 本体からのRecalibrateをコントローラに中継
     };
 
+    // 現在の状態を返す（ログ出力用）
+    State current_state() const { return state_; }
+
   private:
     template <std::size_t N>
     bool send_request_(const joybus::Request<N> &request, uint32_t now_us, uint32_t timeout_us) {

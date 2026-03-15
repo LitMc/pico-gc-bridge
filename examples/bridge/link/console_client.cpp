@@ -1,7 +1,9 @@
 #include "link/console_client.hpp"
+#include "debug_log.hpp"
 #include "domain/transform/pipeline.hpp"
 #include "joybus/codec/identity_wire.hpp"
 #include "joybus/codec/state_wire.hpp"
+#include "link/policy.hpp"
 
 namespace gcinput {
 
@@ -24,14 +26,25 @@ std::size_t ConsoleClient::callback(void *user, const uint8_t *rx, std::size_t r
     auto *self = static_cast<ConsoleClient *>(user);
     self->link_.shared_console().on_request_isr(std::span<const uint8_t>(rx, rx_len));
 
+    const auto cmd = static_cast<joybus::Command>(rx[0]);
+
+    // CON RX: コンソールからのリクエストをログ
+    // Statusコマンドの場合はPollMode/RumbleMode情報付きでログ
+    if (cmd == joybus::Command::Status) {
+        const uint8_t pm = (rx_len >= 2) ? (rx[1] & 0x07) : 0;
+        const uint8_t rm = (rx_len >= 2) ? ((rx[1] >> 3) & 0x03) : 0;
+        debug_log::ring_push_data_with_poll_mode(
+            debug_log::Port::Console, debug_log::Dir::RX, rx[0], rx, rx_len, pm, rm);
+    } else {
+        debug_log::ring_push_data(debug_log::Port::Console, debug_log::Dir::RX, rx[0], rx, rx_len);
+    }
+
     if (!self->link_.is_pad_ready()) {
         return 0;
     }
 
     auto &pad_hub = self->link_.real_pad_hub();
     const auto original_snapshot = pad_hub.load_original_snapshot();
-
-    const auto cmd = static_cast<joybus::Command>(rx[0]);
 
     // コンソールに指定されたPollModeとRumbleModeを応答に使う
     const auto host_console = self->link_.shared_console().load();
@@ -108,6 +121,19 @@ std::size_t ConsoleClient::callback(void *user, const uint8_t *rx, std::size_t r
     const std::size_t tx_len = self->write_tx(modified_reply, tx, tx_max);
     if (tx_len == 0) {
         return 0;
+    }
+
+    // CON TX: コンソールへのレスポンスをログ
+    const auto tx_view = modified_reply.view();
+    if (cmd == joybus::Command::Status) {
+        debug_log::ring_push_data_with_poll_mode(
+            debug_log::Port::Console, debug_log::Dir::TX,
+            static_cast<uint8_t>(cmd), tx_view.data(), tx_view.size(),
+            static_cast<uint8_t>(host_poll_mode),
+            static_cast<uint8_t>(host_rumble_mode));
+    } else {
+        debug_log::ring_push_data(debug_log::Port::Console, debug_log::Dir::TX,
+                                  static_cast<uint8_t>(cmd), tx_view.data(), tx_view.size());
     }
 
     pad_hub.publish_tx_from_isr(original_snapshot.publish_count, original_reply, modified_reply);

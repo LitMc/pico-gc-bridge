@@ -7,8 +7,14 @@ void PadClient::load_reset_epoch_() { last_reset_epoch_ = link_.load_reset_epoch
 
 void PadClient::on_pad_response_isr(joybus::Command command, std::span<const uint8_t> rx) {
     // PAD RX: パッドからの応答をログ
-    debug_log::ring_push_data(debug_log::Port::Pad, debug_log::Dir::RX,
-                              static_cast<uint8_t>(command), rx.data(), rx.size());
+    if (command == joybus::Command::Status) {
+        debug_log::ring_push_data_with_poll_mode(debug_log::Port::Pad, debug_log::Dir::RX,
+                                                 static_cast<uint8_t>(command), rx.data(), rx.size(),
+                                                 last_tx_poll_mode_, last_tx_rumble_mode_);
+    } else {
+        debug_log::ring_push_data(debug_log::Port::Pad, debug_log::Dir::RX,
+                                  static_cast<uint8_t>(command), rx.data(), rx.size());
+    }
     link_.real_pad_hub().on_pad_response_isr(command, rx);
 }
 
