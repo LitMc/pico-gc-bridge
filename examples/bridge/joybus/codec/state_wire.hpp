@@ -86,9 +86,8 @@ inline constexpr void encode_to_status_word(const domain::PadState &state,
     status_word |=
         report.error_latched ? report::to_mask(report::StatusWordBits::ErrorLatched) : 0;
 
-    // 2バイト目の7ビット目は常に1となる（Longo氏の資料では直近エラーの有無となっているが）
-    // ここを1にしないとコントローラが認識されない
-    status_word |= report::to_mask(report::StatusWordBits::Always1);
+    status_word |=
+        report.error_last ? report::to_mask(report::StatusWordBits::ErrorLast) : 0;
 
     status_word |= report.use_controller_origin
                        ? report::to_mask(report::StatusWordBits::UseControllerOrigin)
