@@ -171,6 +171,7 @@ struct StatusSummary {
 };
 
 constexpr uint32_t kSummaryIntervalUs = 500'000; // 500ms
+constexpr uint32_t kMaxDrainPerLoop = 4;
 
 // mainループでのドレイン
 // Ready状態のStatusコマンドはサマリーに集計、それ以外は全出力
@@ -178,7 +179,7 @@ void drain_ring(bool in_ready_state, StatusSummary &summary) {
     using debug_log::Port;
     using debug_log::Dir;
 
-    while (debug_log::g_ring_tail != debug_log::g_ring_head) {
+    for (uint32_t n = 0; n < kMaxDrainPerLoop && debug_log::g_ring_tail != debug_log::g_ring_head; ++n) {
         const debug_log::LogEntry &e = debug_log::g_ring[debug_log::g_ring_tail];
         debug_log::g_ring_tail = (debug_log::g_ring_tail + 1) % debug_log::kRingSize;
 
