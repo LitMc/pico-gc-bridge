@@ -21,6 +21,10 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        build_type: [Debug, Release]
+      fail-fast: false
     container:
       image: ghcr.io/litmc/gc-playground/builder:latest
       options: --user root
@@ -48,9 +52,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/ccache
-          key: ccache-${{ runner.os }}-${{ hashFiles('.github/workflows/build.yaml') }}-${{ github.sha }}
+          key: ccache-${{ runner.os }}-${{ matrix.build_type }}-${{ hashFiles('.github/workflows/build.yaml') }}-${{ github.sha }}
           restore-keys: |
-            ccache-${{ runner.os }}-${{ hashFiles('.github/workflows/build.yaml') }}-
+            ccache-${{ runner.os }}-${{ matrix.build_type }}-${{ hashFiles('.github/workflows/build.yaml') }}-
 
       - name: Configure ccache
         run: |
@@ -64,7 +68,8 @@ jobs:
           cmake -S . -B build -G Ninja \
             -DPICO_SDK_PATH="${GITHUB_WORKSPACE}/pico-sdk" \
             -DCMAKE_C_COMPILER_LAUNCHER=ccache \
-            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
 
       - name: Build bridge
         run: cmake --build build --target bridge
@@ -77,7 +82,7 @@ jobs:
         run: ccache --show-stats
 
       - name: Upload UF2 artifacts
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && matrix.build_type == 'Release'
         uses: actions/upload-artifact@v4
         with:
           name: uf2-artifacts
