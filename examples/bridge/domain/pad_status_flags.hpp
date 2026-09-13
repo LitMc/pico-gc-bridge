@@ -14,10 +14,10 @@ struct PadStatusFlags {
 
     bool error_latched{false}; // これまでの通信のどこかでエラーがあった
 
-    // 直近の送信でエラーがあった。Status応答では常に1のためずっとtrue。IDで意味を持つのかは不明
-    bool error_last{true};
+    // 直近の送信でエラーがあった
+    bool error_last{false};
 
-    bool use_controller_origin{false}; // コントローラのOriginを使う（用途不明）
+    bool use_controller_origin{true}; // コントローラのOriginを使う（用途不明ながら常に1）
 };
 
 static_assert(std::is_trivially_copyable_v<PadStatusFlags>);
